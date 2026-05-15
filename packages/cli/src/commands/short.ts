@@ -30,13 +30,13 @@ import {
 import { buildPipelineConfig, findProjectRoot, loadConfig, log, logError } from "../utils.js";
 
 export const shortCommand = new Command("short")
-  .description("Public-safe commercial short fiction workflow");
+  .description("Commercial short fiction workflow");
 
 shortCommand
   .command("run")
-  .description("Run a benchmark-free short fiction chain from a commercial direction")
+  .description("Run a commercial short fiction chain from a direction")
   .requiredOption("--direction <text>", "Commercial direction, e.g. 女频短篇 婚姻背叛 证据反杀")
-  .option("--reference <path>", "Optional public-safe reference notes/text")
+  .option("--reference <path>", "Optional reference notes/text")
   .option("--story-id <id>", "Output story id under shorts/")
   .option("--out-dir <path>", "Output directory", "shorts")
   .option("--chapters <n>", "Complete short chapter count (12-18)", String(SHORT_HIT_DEFAULT_CHAPTERS))
