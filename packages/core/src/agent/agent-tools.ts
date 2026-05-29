@@ -13,7 +13,7 @@ import { normalizePlatformId, normalizePlatformOrOther } from "../models/book.js
 import { generateShortFictionCover, runShortFictionProduction } from "../pipeline/short-fiction-runner.js";
 import { createPlayDB, type PlayGraphDB } from "../play/play-db-factory.js";
 import { PlayRunner, type PlayStepResult } from "../play/play-runner.js";
-import { PlayStore, type PlayWorld } from "../play/play-store.js";
+import { PlayStore } from "../play/play-store.js";
 import type { AgentContext } from "../agents/base.js";
 
 // ---------------------------------------------------------------------------
@@ -65,28 +65,6 @@ function safePlayId(value: string | undefined, fallback: string): string {
     throw new Error(`Invalid play id: ${JSON.stringify(value)}`);
   }
   return raw;
-}
-
-async function latestPlayTarget(
-  store: PlayStore,
-  worldId: string | undefined,
-  runId: string | undefined,
-): Promise<{ worldId: string; runId: string; world: PlayWorld | null }> {
-  const safeWorldId = worldId?.trim() ? safePlayId(worldId, "main") : undefined;
-  const world = safeWorldId
-    ? await store.loadWorld(safeWorldId)
-    : (await store.listWorlds())[0] ?? null;
-  const resolvedWorldId = world?.id ?? safeWorldId;
-  if (!resolvedWorldId) {
-    throw new Error("No play world found. Start one first with play_start.");
-  }
-  const safeRunId = runId?.trim() ? safePlayId(runId, "main") : undefined;
-  const latestRun = safeRunId ? null : (await store.listRuns(resolvedWorldId))[0] ?? null;
-  return {
-    worldId: resolvedWorldId,
-    runId: safeRunId ?? latestRun?.id ?? "main",
-    world,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -603,12 +581,6 @@ const PlayStartParams = Type.Object({
     Type.Literal("open"),
     Type.Literal("guided"),
   ], { description: "open = free actions; guided = emphasize suggested actions. Default open." })),
-  worldId: Type.Optional(Type.String({
-    description: "Optional stable world id under worlds/. Usually omit and derive from title.",
-  })),
-  runId: Type.Optional(Type.String({
-    description: "Optional run id. Default main.",
-  })),
   initialScene: Type.Optional(Type.String({
     description: "Opening scene shown to the player. Write this as the first playable moment, not as a config summary.",
   })),
@@ -621,6 +593,7 @@ type PlayStartParamsType = Static<typeof PlayStartParams>;
 
 export function createPlayStartTool(
   projectRoot: string,
+  sessionId: string,
 ): AgentTool<typeof PlayStartParams> {
   return {
     name: "play_start",
@@ -637,9 +610,11 @@ export function createPlayStartTool(
     ): Promise<AgentToolResult<unknown>> {
       onUpdate?.(textResult("Starting interactive world..."));
       const store = new PlayStore(projectRoot);
-      const baseId = deriveBookIdFromTitle(params.title) || `play-${Date.now().toString(36)}`;
-      const worldId = safePlayId(params.worldId, baseId);
-      const runId = safePlayId(params.runId, "main");
+      // The play world is bound 1:1 to the chat session: worldId IS the
+      // sessionId. This removes any "which world?" ambiguity, so two play
+      // sessions never advance each other's world.
+      const worldId = safePlayId(sessionId, sessionId);
+      const runId = "main";
       const world = await store.createWorld({
         id: worldId,
         title: params.title.trim(),
@@ -704,12 +679,6 @@ const PlayStepParams = Type.Object({
   input: Type.String({
     description: "The player's next free-form action or chosen option.",
   }),
-  worldId: Type.Optional(Type.String({
-    description: "Optional target world id. Omit to continue the most recently updated play world.",
-  })),
-  runId: Type.Optional(Type.String({
-    description: "Optional run id. Omit to continue the most recently updated run.",
-  })),
 });
 
 type PlayStepParamsType = Static<typeof PlayStepParams>;
@@ -726,6 +695,7 @@ export interface PlayStepToolOptions {
 export function createPlayStepTool(
   pipeline: PipelineRunner,
   projectRoot: string,
+  sessionId: string,
   options: PlayStepToolOptions = {},
 ): AgentTool<typeof PlayStepParams> {
   return {
@@ -744,7 +714,14 @@ export function createPlayStepTool(
       const input = params.input.trim();
       if (!input) return textResult("Play input is empty.");
       const store = new PlayStore(projectRoot);
-      const target = await latestPlayTarget(store, params.worldId, params.runId);
+      // The play world is bound to this chat session (worldId === sessionId).
+      const worldId = safePlayId(sessionId, sessionId);
+      const runId = "main";
+      const world = await store.loadWorld(worldId);
+      if (!world) {
+        return textResult("还没有可推进的互动世界。先用 play_start 开一局。");
+      }
+      const target = { worldId, runId, world };
       onUpdate?.(textResult(`Advancing "${target.worldId}" / "${target.runId}"...`));
       const ctx = pipeline.createAgentContext("play");
       const runner = options.runnerFactory?.({

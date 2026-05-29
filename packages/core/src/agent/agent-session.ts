@@ -478,6 +478,7 @@ function agentMessagesToPlain(
 function createAgentToolsForMode(params: {
   readonly pipeline: PipelineRunner;
   readonly bookId: string | null;
+  readonly sessionId: string;
   readonly sessionKind: SessionKind;
   readonly projectRoot: string;
   readonly allowSystemFileRead: boolean;
@@ -498,8 +499,8 @@ function createAgentToolsForMode(params: {
 
   if (params.sessionKind === "play") {
     return [
-      createPlayStartTool(params.projectRoot),
-      createPlayStepTool(params.pipeline, params.projectRoot),
+      createPlayStartTool(params.projectRoot, params.sessionId),
+      createPlayStepTool(params.pipeline, params.projectRoot, params.sessionId),
     ];
   }
 
@@ -615,7 +616,7 @@ async function runAgentSessionUnlocked(
       initialState: {
         model,
         systemPrompt: buildAgentSystemPrompt(bookId, language, sessionKind),
-        tools: createAgentToolsForMode({ pipeline, bookId, sessionKind, projectRoot, allowSystemFileRead, language }),
+        tools: createAgentToolsForMode({ pipeline, bookId, sessionId, sessionKind, projectRoot, allowSystemFileRead, language }),
         messages: initialAgentMessages,
       },
       transformContext: createBookContextTransform(bookId, projectRoot),
