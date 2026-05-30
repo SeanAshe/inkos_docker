@@ -21,6 +21,7 @@ export interface PlayActionInterpreterLike {
   readonly interpret: (input: {
     readonly input: string;
     readonly sceneBrief: string;
+    readonly language?: "zh" | "en";
   }) => Promise<PlayActionIntentInput>;
 }
 
@@ -30,6 +31,7 @@ export interface PlayWorldMutatorLike {
     readonly input: string;
     readonly action: PlayActionIntentInput;
     readonly context: string;
+    readonly language?: "zh" | "en";
   }) => Promise<PlayMutationInput>;
 }
 
@@ -40,6 +42,7 @@ export interface PlaySceneRendererLike {
     readonly mutationSummary: string;
     readonly stateBrief: string;
     readonly mode?: "open" | "guided";
+    readonly language?: "zh" | "en";
   }) => Promise<PlaySceneRender>;
 }
 
@@ -93,17 +96,21 @@ export class PlayRunner {
     });
 
     const turn = (await this.store.readEvents(this.options.worldId, this.options.runId)).length + 1;
+    const world = await this.store.loadWorld(this.options.worldId);
+    const language = world?.language ?? "zh";
     const sceneBrief = await this.readOptionalProjection("projections/scene.md");
     const action = PlayActionIntentSchema.parse(await this.actionInterpreter.interpret({
       input: rawInput,
-      sceneBrief: sceneBrief || "新回合开始，沿用当前世界状态。",
+      sceneBrief: sceneBrief || (language === "en" ? "A new turn begins; carry over the current world state." : "新回合开始，沿用当前世界状态。"),
+      language,
     }));
-    const context = await this.buildContextBrief(sceneBrief);
+    const context = await this.buildContextBrief(sceneBrief, language);
     const mutation = PlayMutationSchema.parse(await this.worldMutator.proposeMutation({
       turn,
       input: rawInput,
       action,
       context,
+      language,
     }));
     const applied = applyPlayMutation({
       db: this.db,
@@ -122,13 +129,13 @@ export class PlayRunner {
       blocked: mutation.blocked,
     });
 
-    const world = await this.store.loadWorld(this.options.worldId);
     const render = await this.sceneRenderer.render({
       input: rawInput,
       action,
       mutationSummary: mutation.summary || mutation.blockedReason,
       stateBrief,
       mode: world?.mode ?? "open",
+      language,
     });
     await this.store.writeProjection(this.options.worldId, this.options.runId, "projections/scene.md", `${render.sceneText}\n`);
     await this.store.appendTranscriptTurn(this.options.worldId, this.options.runId, {
@@ -144,12 +151,15 @@ export class PlayRunner {
     };
   }
 
-  private async buildContextBrief(sceneBrief: string): Promise<string> {
+  private async buildContextBrief(sceneBrief: string, language: "zh" | "en"): Promise<string> {
     const stateBrief = await this.readOptionalProjection("projections/state.md");
+    const isEn = language === "en";
+    const sceneLabel = isEn ? "Current scene:" : "当前场景：";
+    const stateLabel = isEn ? "Current state:" : "当前状态：";
     return [
-      sceneBrief ? `当前场景：\n${sceneBrief}` : "",
-      stateBrief ? `当前状态：\n${stateBrief}` : "",
-    ].filter(Boolean).join("\n\n") || "暂无持久化状态。";
+      sceneBrief ? `${sceneLabel}\n${sceneBrief}` : "",
+      stateBrief ? `${stateLabel}\n${stateBrief}` : "",
+    ].filter(Boolean).join("\n\n") || (isEn ? "No persisted state yet." : "暂无持久化状态。");
   }
 
   private async readOptionalProjection(relativePath: string): Promise<string> {

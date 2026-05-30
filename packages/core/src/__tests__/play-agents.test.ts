@@ -80,4 +80,11 @@ describe("scene renderer prompt by mode", () => {
     const prompt = buildSceneRendererSystemPrompt("open");
     expect(prompt).not.toContain("必须给 2-4");
   });
+
+  it("renders the scene prompt in English when language is en", () => {
+    const prompt = buildSceneRendererSystemPrompt("guided", "en");
+    expect(prompt).toContain("interactive-fiction scene-response author");
+    expect(prompt).toContain("suggestedActions");
+    expect(prompt).not.toMatch(/[一-鿿]/); // no CJK leaks into the English prompt
+  });
 });

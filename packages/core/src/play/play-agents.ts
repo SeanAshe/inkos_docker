@@ -12,6 +12,7 @@ import {
 export interface PlayActionInterpreterInput {
   readonly input: string;
   readonly sceneBrief: string;
+  readonly language?: "zh" | "en";
 }
 
 export interface PlayWorldMutatorInput {
@@ -19,6 +20,7 @@ export interface PlayWorldMutatorInput {
   readonly input: string;
   readonly action: PlayActionIntentInput;
   readonly context: string;
+  readonly language?: "zh" | "en";
 }
 
 export interface PlaySceneRenderInput {
@@ -26,6 +28,7 @@ export interface PlaySceneRenderInput {
   readonly action: PlayActionIntentInput;
   readonly mutationSummary: string;
   readonly stateBrief: string;
+  readonly language?: "zh" | "en";
 }
 
 const PlaySceneRenderSchema = z.object({
@@ -45,8 +48,8 @@ export class PlayActionInterpreterAgent extends BaseAgent {
 
   async interpret(input: PlayActionInterpreterInput): Promise<PlayActionIntent> {
     const response = await this.chat([
-      { role: "system", content: buildActionInterpreterSystemPrompt() },
-      { role: "user", content: buildActionInterpreterUserPrompt(input) },
+      { role: "system", content: buildActionInterpreterSystemPrompt(input.language ?? "zh") },
+      { role: "user", content: buildActionInterpreterUserPrompt(input, input.language ?? "zh") },
     ], { temperature: 0.15, maxTokens: 1024 });
     return PlayActionIntentSchema.parse(parseJson(response.content));
   }
@@ -63,8 +66,8 @@ export class PlayWorldMutatorAgent extends BaseAgent {
 
   async proposeMutation(input: PlayWorldMutatorInput): Promise<PlayMutation> {
     const response = await this.chat([
-      { role: "system", content: buildWorldMutatorSystemPrompt() },
-      { role: "user", content: buildWorldMutatorUserPrompt(input) },
+      { role: "system", content: buildWorldMutatorSystemPrompt(input.language ?? "zh") },
+      { role: "user", content: buildWorldMutatorUserPrompt(input, input.language ?? "zh") },
     ], { temperature: 0.25, maxTokens: 4096 });
     return PlayMutationSchema.parse(parseJson(response.content));
   }
@@ -81,14 +84,23 @@ export class PlaySceneRendererAgent extends BaseAgent {
 
   async render(input: PlaySceneRenderInput & { readonly mode?: "open" | "guided" }): Promise<PlaySceneRender> {
     const response = await this.chat([
-      { role: "system", content: buildSceneRendererSystemPrompt(input.mode ?? "open") },
-      { role: "user", content: buildSceneRendererUserPrompt(input) },
+      { role: "system", content: buildSceneRendererSystemPrompt(input.mode ?? "open", input.language ?? "zh") },
+      { role: "user", content: buildSceneRendererUserPrompt(input, input.language ?? "zh") },
     ], { temperature: 0.45, maxTokens: 2048 });
     return PlaySceneRenderSchema.parse(parseJson(response.content));
   }
 }
 
-function buildActionInterpreterSystemPrompt(): string {
+function buildActionInterpreterSystemPrompt(language: "zh" | "en"): string {
+  if (language === "en") {
+    return [
+      "You are an interactive-fiction action interpreter.",
+      "Your job is to normalize one line of the player's natural language into one of five action kinds: look / say / move / do / wait.",
+      "Do not add drama for the player, do not advance the plot, do not write scene prose.",
+      "look = observe/examine/recall a clue; say = speak/probe/confront; move = move to a location; do = perform an action/use an item/investigate; wait = wait/stall/watch.",
+      "Output strict JSON, no explanation.",
+    ].join("\n");
+  }
   return [
     "你是互动小说动作理解器。",
     "你的任务是把玩家一句自然语言，归一成五类动作之一：look / say / move / do / wait。",
@@ -98,7 +110,18 @@ function buildActionInterpreterSystemPrompt(): string {
   ].join("\n");
 }
 
-function buildActionInterpreterUserPrompt(input: PlayActionInterpreterInput): string {
+function buildActionInterpreterUserPrompt(input: PlayActionInterpreterInput, language: "zh" | "en"): string {
+  if (language === "en") {
+    return [
+      "Current scene:",
+      input.sceneBrief,
+      "",
+      "Player input:",
+      input.input,
+      "",
+      "Output fields: actionKind, targetEntityLabel?, targetLocationLabel?, intent, manner, risk, ambiguity, secondaryActions.",
+    ].join("\n");
+  }
   return [
     "当前场景：",
     input.sceneBrief,
@@ -110,7 +133,20 @@ function buildActionInterpreterUserPrompt(input: PlayActionInterpreterInput): st
   ].join("\n");
 }
 
-function buildWorldMutatorSystemPrompt(): string {
+function buildWorldMutatorSystemPrompt(language: "zh" | "en"): string {
+  if (language === "en") {
+    return [
+      "You are an interactive-fiction world-state drafter.",
+      "Based only on the player's action and the current context, propose this turn's possible state changes as a draft.",
+      "Do not write final prose; do not commit to the store on the reducer's behalf; do not let key states jump to completion out of nowhere.",
+      "This engine is genre-neutral: romance, adventure, wuxia, mystery, slice-of-life all use the same structure. Entity types: actor/location/item/evidence/clue/claim/proof_chain/organization/rule/scene/event — use as needed.",
+      "Use entity.status to record state progress for any genre, with status words suited to this world's genre, advancing step by step without skipping (e.g. relationship: stranger -> curious -> attracted -> lover; injury: healthy -> bleeding -> critical; clue: found -> collected -> confirmed).",
+      "Numbers (affection, suspense, resources, health, anger, etc.) go in stateSlots: scale them by dramatic logic, big swings allowed, but every change must be explainable from this turn's story — no unmotivated jumps.",
+      "Only use evidence.transitions for the evidence lifecycle when this world is genuinely an investigation/mystery; otherwise leave it empty.",
+      "If the player's action is invalid or information is insufficient, set blocked=true and write blockedReason.",
+      "Output strict JSON matching PlayMutation: eventId, turn, actionKind, summary, entities, edges, stateSlots, evidence, blocked, blockedReason, notes.",
+    ].join("\n");
+  }
   return [
     "你是互动小说世界状态草案员。",
     "你只根据玩家动作和当前上下文，提出本回合可能发生的状态变化草案。",
@@ -124,7 +160,22 @@ function buildWorldMutatorSystemPrompt(): string {
   ].join("\n");
 }
 
-function buildWorldMutatorUserPrompt(input: PlayWorldMutatorInput): string {
+function buildWorldMutatorUserPrompt(input: PlayWorldMutatorInput, language: "zh" | "en"): string {
+  if (language === "en") {
+    return [
+      `turn: ${input.turn}`,
+      "Player's words:",
+      input.input,
+      "",
+      "Action interpretation:",
+      JSON.stringify(PlayActionIntentSchema.parse(input.action), null, 2),
+      "",
+      "Current context:",
+      input.context,
+      "",
+      "Requirement: use eventId evt-" + input.turn + "; every new or referenced entity id must be stable, readable, and short.",
+    ].join("\n");
+  }
   return [
     `turn: ${input.turn}`,
     "玩家原话：",
@@ -140,7 +191,18 @@ function buildWorldMutatorUserPrompt(input: PlayWorldMutatorInput): string {
   ].join("\n");
 }
 
-export function buildSceneRendererSystemPrompt(mode: "open" | "guided" = "open"): string {
+export function buildSceneRendererSystemPrompt(mode: "open" | "guided" = "open", language: "zh" | "en" = "zh"): string {
+  if (language === "en") {
+    const base = [
+      "You are an interactive-fiction scene-response author.",
+      "Write the response only from the already-applied state; do not overturn the reducer's results.",
+      "The response should read like a playable novel: action, senses, pressure, room to choose; never a system log.",
+    ];
+    const actionsRule = mode === "guided"
+      ? "This is a choice-driven mode: suggestedActions must give 2-4 every turn — it is the player's only way forward; each option is one directly actionable, concrete move."
+      : "Give 2-4 suggested actions as short phrases; in open mode they are only hints and do not restrict the player's input.";
+    return [...base, actionsRule, "Output strict JSON: sceneText, suggestedActions."].join("\n");
+  }
   const base = [
     "你是互动小说场景回应作者。",
     "你只能根据已经应用后的状态写回应，不要推翻 reducer 结果。",
@@ -152,7 +214,22 @@ export function buildSceneRendererSystemPrompt(mode: "open" | "guided" = "open")
   return [...base, actionsRule, "输出严格 JSON：sceneText, suggestedActions。"].join("\n");
 }
 
-function buildSceneRendererUserPrompt(input: PlaySceneRenderInput): string {
+function buildSceneRendererUserPrompt(input: PlaySceneRenderInput, language: "zh" | "en"): string {
+  if (language === "en") {
+    return [
+      "Player's words:",
+      input.input,
+      "",
+      "Action:",
+      JSON.stringify(PlayActionIntentSchema.parse(input.action), null, 2),
+      "",
+      "Applied changes this turn:",
+      input.mutationSummary,
+      "",
+      "Current state summary:",
+      input.stateBrief,
+    ].join("\n");
+  }
   return [
     "玩家原话：",
     input.input,

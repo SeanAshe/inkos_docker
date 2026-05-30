@@ -623,19 +623,20 @@ export function createPlayStartTool(
       // sessions never advance each other's world.
       const worldId = safePlayId(sessionId, sessionId);
       const runId = "main";
+      const playLanguage = inferLanguage([params.title, params.premise, params.initialScene].filter(Boolean).join("\n"));
       const world = await store.createWorld({
         id: worldId,
         title: params.title.trim(),
         premise: params.premise?.trim() ?? "",
         mode: playMode ?? params.mode ?? "open",
+        language: playLanguage,
       });
       await store.ensureRun(world.id, runId);
 
       const existingTranscript = await store.readTranscript(world.id, runId);
-      const sceneText = (params.initialScene?.trim() || [
-        `你进入「${world.title}」。`,
-        world.premise ? world.premise : "场景已经就位，等待你的第一个动作。",
-      ].join("\n")).trim();
+      const sceneText = (params.initialScene?.trim() || (world.language === "en"
+        ? [`You enter "${world.title}".`, world.premise || "The scene is set. Make your first move."].join("\n")
+        : [`你进入「${world.title}」。`, world.premise || "场景已经就位，等待你的第一个动作。"].join("\n"))).trim();
       if (existingTranscript.length === 0) {
         await store.writeProjection(world.id, runId, "projections/scene.md", `${sceneText}\n`);
         await store.saveCurrentState(world.id, runId, {
