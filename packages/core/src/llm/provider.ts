@@ -296,6 +296,30 @@ export class PartialResponseError extends Error {
 /** Minimum chars to consider a partial response salvageable (Chinese ~2 chars/word → 500 chars ≈ 250 words) */
 const MIN_SALVAGEABLE_CHARS = 500;
 
+export class ContextWindowExceededError extends Error {
+  readonly estimatedInputTokens: number;
+  readonly reservedOutputTokens: number;
+  readonly contextWindow: number;
+
+  constructor(params: {
+    readonly estimatedInputTokens: number;
+    readonly reservedOutputTokens: number;
+    readonly contextWindow: number;
+    readonly model: string;
+  }) {
+    super(
+      `InkOS context window guard: estimated input ${params.estimatedInputTokens} tokens + ` +
+      `reserved output ${params.reservedOutputTokens} tokens exceeds context window ${params.contextWindow} ` +
+      `for model "${params.model}". Please compress the active book/session context before retrying; ` +
+      `InkOS will not truncate semantic text automatically.`,
+    );
+    this.name = "ContextWindowExceededError";
+    this.estimatedInputTokens = params.estimatedInputTokens;
+    this.reservedOutputTokens = params.reservedOutputTokens;
+    this.contextWindow = params.contextWindow;
+  }
+}
+
 /** Keys managed by the provider layer — prevent extra from overriding them. */
 const RESERVED_KEYS = new Set(["max_tokens", "temperature", "model", "messages", "stream"]);
 
@@ -342,6 +366,59 @@ function clampTemperatureForModel(
 // 仅测试用：清空 warning 去重集合。
 export function __resetFixedTemperatureWarnings(): void {
   warnedFixedTemperatureModels.clear();
+}
+
+function estimateTextTokens(text: string): number {
+  if (!text) return 0;
+  const cjk = text.match(/[\u3400-\u9fff]/g)?.length ?? 0;
+  const nonCjk = text.length - cjk;
+  return Math.ceil(cjk + nonCjk / 4);
+}
+
+function estimateLLMMessagesTokens(messages: ReadonlyArray<LLMMessage>): number {
+  return messages.reduce((total, message) => total + estimateTextTokens(message.content), 0);
+}
+
+function estimateAgentMessagesTokens(messages: ReadonlyArray<AgentMessage>): number {
+  let total = 0;
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      total += estimateTextTokens(message.content ?? "");
+      for (const call of message.toolCalls ?? []) {
+        total += estimateTextTokens(call.name);
+        total += estimateTextTokens(call.arguments);
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      total += estimateTextTokens(message.toolCallId);
+      total += estimateTextTokens(message.content);
+      continue;
+    }
+    total += estimateTextTokens(message.content);
+  }
+  return total;
+}
+
+function estimateToolsTokens(tools: ReadonlyArray<ToolDefinition>): number {
+  return estimateTextTokens(JSON.stringify(tools));
+}
+
+function assertWithinContextWindow(params: {
+  readonly piModel: PiModel<PiApi>;
+  readonly model: string;
+  readonly estimatedInputTokens: number;
+  readonly reservedOutputTokens: number;
+}): void {
+  const contextWindow = params.piModel.contextWindow;
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) return;
+  if (params.estimatedInputTokens + params.reservedOutputTokens <= contextWindow) return;
+  throw new ContextWindowExceededError({
+    estimatedInputTokens: params.estimatedInputTokens,
+    reservedOutputTokens: params.reservedOutputTokens,
+    contextWindow,
+    model: params.model,
+  });
 }
 
 // === Error Wrapping ===
@@ -1028,6 +1105,12 @@ export async function chatCompletion(
   try {
     return await withTransientLLMRetry(
       async () => {
+        assertWithinContextWindow({
+          piModel: resolvePiModel(client, model),
+          model,
+          estimatedInputTokens: estimateLLMMessagesTokens(messages),
+          reservedOutputTokens: resolved.maxTokens,
+        });
         if (shouldUseNativeCustomTransport(client)) {
           return chatCompletionViaCustomOpenAICompatible(client, model, messages, resolved, onStreamProgress, onTextDelta);
         }
@@ -1070,6 +1153,12 @@ export async function chatWithTools(
       ),
       maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
     };
+    assertWithinContextWindow({
+      piModel: resolvePiModel(client, model),
+      model,
+      estimatedInputTokens: estimateAgentMessagesTokens(messages) + estimateToolsTokens(tools),
+      reservedOutputTokens: resolved.maxTokens,
+    });
     return await chatWithToolsViaPiAi(client, model, messages, tools, resolved);
   } catch (error) {
     throw wrapLLMError(error, errorCtx);

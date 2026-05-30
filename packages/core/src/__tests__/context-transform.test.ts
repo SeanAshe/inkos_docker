@@ -47,6 +47,33 @@ describe("createBookContextTransform", () => {
     expect(result[1]).toBe(original[0]);
   });
 
+  it("compacts large truth files instead of injecting their full body", async () => {
+    const storyDir = join(projectRoot, "books", bookId, "story");
+    await writeFile(
+      join(storyDir, "story_bible.md"),
+      [
+        "# Story Bible",
+        "## 关键设定",
+        "| 状态 | 条目 |",
+        "| active | 主角正在追查码头旧案 |",
+        "UNBOUNDED_BODY_SHOULD_NOT_BE_INJECTED ".repeat(500),
+      ].join("\n"),
+    );
+
+    const transform = createBookContextTransform(bookId, projectRoot);
+    const result = await transform([
+      { role: "user" as const, content: "讨论下一章", timestamp: Date.now() },
+    ]);
+    const content = (result[0] as { content: string }).content;
+
+    expect(content).toContain("上下文压缩包");
+    expect(content).toContain("story_bible.md");
+    expect(content).toContain("## 关键设定");
+    expect(content).toContain("| active | 主角正在追查码头旧案 |");
+    expect(content).toContain("未全文注入");
+    expect(content).not.toContain("UNBOUNDED_BODY_SHOULD_NOT_BE_INJECTED");
+  });
+
   it("sorts truth files in priority order", async () => {
     const storyDir = join(projectRoot, "books", bookId, "story");
     await writeFile(join(storyDir, "volume_outline.md"), "# Volume Outline");
