@@ -49,6 +49,9 @@ describe("buildAgentSystemPrompt", () => {
       const prompt = buildAgentSystemPrompt(null, "zh", "book-create");
       expect(prompt).toContain("建书助手");
       expect(prompt).toContain("确认是否创建");
+      expect(prompt).toContain("分阶段");
+      expect(prompt).toContain("世界观与规则");
+      expect(prompt).toContain("结构与约束");
       expect(prompt).toContain("propose_action");
       expect(prompt).toContain("create_book");
       expect(prompt).not.toContain("sub_agent");

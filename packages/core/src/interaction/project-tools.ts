@@ -331,7 +331,7 @@ async function withPipelineInteractionTelemetry<T extends { chapterNumber?: numb
 
 const CREATE_BOOK_TOOL: ToolDefinition = {
   name: "create_book",
-  description: "根据用户描述生成建书参数。系统会将参数渲染为可编辑表单，用户确认后建书。",
+  description: "根据用户描述更新建书草案。系统会将草案按阶段渲染给用户，用户确认后才建书。",
   parameters: {
     type: "object",
     properties: {
@@ -341,26 +341,44 @@ const CREATE_BOOK_TOOL: ToolDefinition = {
       targetChapters: { type: "number", description: "目标章数，默认 200" },
       chapterWordCount: { type: "number", description: "每章字数，默认 3000" },
       language: { type: "string", enum: ["zh", "en"], description: "写作语言，默认 zh" },
-      brief: { type: "string", description: "创意简述，会传给 Architect 智能体生成完整的世界观、主角、冲突等 foundation 文件。把用户提到的所有创意要素都写进这里。" },
+      brief: { type: "string", description: "面向读者的故事简介。不要把所有设定混成唯一字段；能拆开的内容要分别写入下面字段。" },
+      worldPremise: { type: "string", description: "世界观、故事发生环境、基本规则。" },
+      settingNotes: { type: "string", description: "设定补充、时代质感、规则限制、不可变事实。" },
+      protagonist: { type: "string", description: "主角身份、处境、欲望、压力、初始缺口。" },
+      supportingCast: { type: "string", description: "关键配角及其利益关系。信息不足可留空。" },
+      conflictCore: { type: "string", description: "核心冲突、主要压迫、读者期待的回报。" },
+      volumeOutline: { type: "string", description: "第一卷或第一阶段方向，不要写成全书流水账。" },
+      constraints: { type: "string", description: "用户明确提出的写作硬约束，如人称、比例、禁忌、节奏。" },
+      authorIntent: { type: "string", description: "用户向前生效的创作意图和方向控制。" },
+      currentFocus: { type: "string", description: "下一步最需要展开或确认的焦点。" },
+      nextQuestion: { type: "string", description: "如果还缺关键信息，只问一个最重要的问题。" },
+      missingFields: {
+        type: "array",
+        items: { type: "string" },
+        description: "仍缺的字段 key，例如 worldPremise, protagonist, conflictCore, targetChapters。",
+      },
+      readyToCreate: { type: "boolean", description: "只有核心阶段信息齐全时才为 true。" },
     },
-    required: ["title", "genre", "platform", "brief"],
   },
 };
 
 const BOOK_DRAFT_SYSTEM_PROMPT = [
-  "你是 InkOS 的建书助手。用户会描述想写的书，你需要调用 create_book 工具来生成建书参数。",
+  "你是 InkOS 的建书草案助手。用户会分多轮描述想写的书，你需要调用 create_book 工具更新一份可编辑草案。",
   "",
   "规则：",
-  "1. 从用户描述中推断所有字段，大胆预填合理默认值。",
-  "2. brief 字段要详细——它会传给 Architect 智能体生成完整的世界观、主角、冲突等 foundation 文件。把用户提到的所有创意要素都写进 brief。",
-  "3. 如果用户后续要求修改某些字段，重新调用 create_book 工具，只更新被提到的字段，其余保持不变。",
-  "4. 不要只回复文字讨论——必须调用 create_book 工具输出结构化参数。",
+  "1. 不要把世界观、主角、冲突、卷纲全部塞进 brief；能拆开的内容必须分别写入 worldPremise、protagonist、conflictCore、volumeOutline 等字段。",
+  "2. 按阶段收集：基础信息(title/genre/platform/language/targetChapters/chapterWordCount) -> 世界观(worldPremise/settingNotes) -> 角色(protagonist/supportingCast) -> 冲突(conflictCore/blurb/authorIntent) -> 结构(volumeOutline/currentFocus/constraints)。",
+  "3. 用户只给一部分信息时，只更新这部分，不要为了 readyToCreate 编造剩余阶段。",
+  "4. 信息还不够时，把 missingFields 写清楚，并在 nextQuestion 里只问一个最关键的问题。",
+  "5. 只有 title、genre、platform、targetChapters、chapterWordCount、worldPremise、protagonist、conflictCore 都明确时，readyToCreate 才能为 true。",
+  "6. 如果用户后续要求修改某些字段，重新调用 create_book 工具，只更新被提到的字段，其余保持不变。",
+  "7. 不要只回复文字讨论——必须调用 create_book 工具输出结构化草案。",
 ].join("\n");
 
 /** Map directive field keys to BookCreationDraft property names. */
 function applyFieldsToDraft(
   existing: BookCreationDraft | undefined,
-  fields: Readonly<Record<string, string>>,
+  fields: Readonly<Record<string, unknown>>,
   concept: string,
 ): BookCreationDraft {
   const draft: BookCreationDraft = {
@@ -370,62 +388,78 @@ function applyFieldsToDraft(
     ...(existing ?? {}),
   };
 
-  for (const [key, value] of Object.entries(fields)) {
-    if (!value) continue;
+  for (const [key, rawValue] of Object.entries(fields)) {
+    if (rawValue === undefined || rawValue === null || rawValue === "") continue;
+    const value = typeof rawValue === "string" ? rawValue.trim() : rawValue;
+    if (value === "") continue;
 
     switch (key) {
       case "title":
-        draft.title = value;
+        if (typeof value === "string") draft.title = value;
         break;
       case "genre":
-        draft.genre = value;
+        if (typeof value === "string") draft.genre = value;
         break;
       case "platform":
-        draft.platform = value;
+        if (typeof value === "string") draft.platform = value;
         break;
       case "language":
         if (value === "zh" || value === "en") draft.language = value;
         break;
       case "targetChapters": {
-        const n = parseInt(value, 10);
+        const n = typeof value === "number" ? value : parseInt(String(value), 10);
         if (!Number.isNaN(n) && n > 0) draft.targetChapters = n;
         break;
       }
       case "chapterWordCount":
       case "chapterLength": {
-        const n = parseInt(value, 10);
+        const n = typeof value === "number" ? value : parseInt(String(value), 10);
         if (!Number.isNaN(n) && n > 0) draft.chapterWordCount = n;
         break;
       }
+      case "brief":
       case "blurb":
-        draft.blurb = value;
+        if (typeof value === "string") draft.blurb = value;
         break;
       case "worldPremise":
-        draft.worldPremise = value;
+        if (typeof value === "string") draft.worldPremise = value;
         break;
       case "settingNotes":
-        draft.settingNotes = value;
+        if (typeof value === "string") draft.settingNotes = value;
         break;
       case "protagonist":
-        draft.protagonist = value;
+        if (typeof value === "string") draft.protagonist = value;
         break;
       case "supportingCast":
-        draft.supportingCast = value;
+        if (typeof value === "string") draft.supportingCast = value;
         break;
       case "conflictCore":
-        draft.conflictCore = value;
+        if (typeof value === "string") draft.conflictCore = value;
         break;
       case "volumeOutline":
-        draft.volumeOutline = value;
+        if (typeof value === "string") draft.volumeOutline = value;
         break;
       case "constraints":
-        draft.constraints = value;
+        if (typeof value === "string") draft.constraints = value;
         break;
       case "authorIntent":
-        draft.authorIntent = value;
+        if (typeof value === "string") draft.authorIntent = value;
         break;
       case "currentFocus":
-        draft.currentFocus = value;
+        if (typeof value === "string") draft.currentFocus = value;
+        break;
+      case "nextQuestion":
+        if (typeof value === "string") draft.nextQuestion = value;
+        break;
+      case "missingFields":
+        if (Array.isArray(value)) {
+          draft.missingFields = value
+            .filter((field): field is string => typeof field === "string" && field.trim().length > 0)
+            .map((field) => field.trim());
+        }
+        break;
+      case "readyToCreate":
+        if (typeof value === "boolean") draft.readyToCreate = value;
         break;
       // Unknown keys are silently ignored — the LLM may emit
       // application-level keys we don't map to the draft struct.
@@ -433,6 +467,29 @@ function applyFieldsToDraft(
   }
 
   return draft;
+}
+
+function missingCoreDraftFields(draft: BookCreationDraft): string[] {
+  const missing: string[] = [];
+  if (!draft.title?.trim()) missing.push("title");
+  if (!draft.genre?.trim()) missing.push("genre");
+  if (!draft.platform?.trim()) missing.push("platform");
+  if (typeof draft.targetChapters !== "number") missing.push("targetChapters");
+  if (typeof draft.chapterWordCount !== "number") missing.push("chapterWordCount");
+  if (!draft.worldPremise?.trim()) missing.push("worldPremise");
+  if (!draft.protagonist?.trim()) missing.push("protagonist");
+  if (!draft.conflictCore?.trim()) missing.push("conflictCore");
+  return missing;
+}
+
+function finalizeBookDraft(draft: BookCreationDraft): BookCreationDraft {
+  const coreMissing = missingCoreDraftFields(draft);
+  const missingFields = Array.from(new Set([...coreMissing, ...(draft.missingFields ?? [])]));
+  return {
+    ...draft,
+    missingFields,
+    readyToCreate: draft.readyToCreate === true && coreMissing.length === 0,
+  };
 }
 
 function formatDraftForUserMessage(
@@ -486,7 +543,16 @@ export function createInteractionToolsFromDeps(
             details: {
               creationDraft: {
                 concept,
-                missingFields: ["title", "genre", "targetChapters"],
+                missingFields: [
+                  "title",
+                  "genre",
+                  "platform",
+                  "targetChapters",
+                  "chapterWordCount",
+                  "worldPremise",
+                  "protagonist",
+                  "conflictCore",
+                ],
                 readyToCreate: false,
               },
             },
@@ -521,19 +587,7 @@ export function createInteractionToolsFromDeps(
         }
       }
 
-      // Build a draft from tool call arguments
-      const draft: BookCreationDraft = {
-        concept,
-        title: (parsedArgs.title as string) ?? existingDraft?.title,
-        genre: (parsedArgs.genre as string) ?? existingDraft?.genre,
-        platform: (parsedArgs.platform as string) ?? existingDraft?.platform,
-        language: (parsedArgs.language as "zh" | "en") ?? existingDraft?.language,
-        targetChapters: (parsedArgs.targetChapters as number) ?? existingDraft?.targetChapters,
-        chapterWordCount: (parsedArgs.chapterWordCount as number) ?? existingDraft?.chapterWordCount,
-        blurb: (parsedArgs.brief as string) ?? existingDraft?.blurb,
-        missingFields: [],
-        readyToCreate: Boolean(parsedArgs.title && parsedArgs.genre && parsedArgs.platform),
-      };
+      const draft = finalizeBookDraft(applyFieldsToDraft(existingDraft, parsedArgs, concept));
 
       return {
         __interaction: {

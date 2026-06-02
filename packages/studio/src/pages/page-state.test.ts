@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildBookCreateAgentRequest,
   buildBookCreatePayload,
+  buildCreationDraftStages,
   buildCreationDraftSummary,
   canCreateFromDraft,
   defaultBookCreateForm,
@@ -205,21 +206,25 @@ describe("book create agent session", () => {
 });
 
 describe("canCreateFromDraft", () => {
-  it("accepts drafts explicitly marked ready", () => {
+  it("does not let readyToCreate bypass the staged creation minimum", () => {
     expect(canCreateFromDraft({
       concept: "港风商战悬疑",
       readyToCreate: true,
       missingFields: [],
-    })).toBe(true);
+    })).toBe(false);
   });
 
-  it("accepts drafts that already have the minimum creation fields", () => {
+  it("accepts drafts that already have the staged creation minimum", () => {
     expect(canCreateFromDraft({
       concept: "港风商战悬疑",
       title: "夜港账本",
       genre: "urban",
+      platform: "tomato",
       targetChapters: 120,
       chapterWordCount: 2800,
+      worldPremise: "近未来港口城，账本牵出多方势力。",
+      protagonist: "林砚，水货账房出身，擅长记账和看人。",
+      conflictCore: "洗白与旧债回潮的对撞。",
       readyToCreate: false,
       missingFields: [],
     })).toBe(true);
@@ -236,6 +241,68 @@ describe("canCreateFromDraft", () => {
 });
 
 describe("buildCreationDraftSummary", () => {
+  it("groups the draft by creation stages so users do not create from a mixed blob", () => {
+    const stages = buildCreationDraftStages({
+      concept: "港风商战悬疑，主角从灰产洗白。",
+      title: "夜港账本",
+      genre: "urban",
+      platform: "tomato",
+      targetChapters: 120,
+      chapterWordCount: 2800,
+      worldPremise: "近未来港口城，账本牵出多方势力。",
+      settingNotes: "账本、港口、灰产规则都要服务洗白压力。",
+      protagonist: "林砚，水货账房出身，擅长记账和看人。",
+      conflictCore: "洗白与旧债回潮的对撞。",
+      volumeOutline: "卷一先查账，再暴露港口旧案。",
+      missingFields: ["supportingCast"],
+      readyToCreate: false,
+    }, "zh");
+
+    expect(stages.map((stage) => ({
+      key: stage.key,
+      label: stage.label,
+      status: stage.status,
+      rows: stage.rows.map((row) => row.key),
+      missing: stage.missing,
+    }))).toEqual([
+      {
+        key: "basic",
+        label: "基础信息",
+        status: "complete",
+        rows: ["title", "genre", "platform", "targetChapters", "chapterWordCount"],
+        missing: [],
+      },
+      {
+        key: "world",
+        label: "世界观与规则",
+        status: "complete",
+        rows: ["worldPremise", "settingNotes"],
+        missing: [],
+      },
+      {
+        key: "characters",
+        label: "主角与角色",
+        status: "partial",
+        rows: ["protagonist"],
+        missing: ["配角"],
+      },
+      {
+        key: "conflict",
+        label: "冲突与回报",
+        status: "complete",
+        rows: ["conflictCore"],
+        missing: [],
+      },
+      {
+        key: "structure",
+        label: "结构与写作约束",
+        status: "complete",
+        rows: ["volumeOutline"],
+        missing: [],
+      },
+    ]);
+  });
+
   it("surfaces the shared foundation draft in a user-facing order", () => {
     expect(buildCreationDraftSummary({
       concept: "港风商战悬疑，主角从灰产洗白。",
