@@ -4124,6 +4124,87 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // --- Side-story (番外) init: companion book inheriting a parent's canon ---
+
+  app.post("/api/v1/spinoff/init", async (c) => {
+    const body = await c.req.json<{
+      title: string; parentBookId: string; direction?: string;
+      genre?: string; platform?: string;
+      targetChapters?: number; chapterWordCount?: number; language?: string;
+    }>();
+    if (!body.title?.trim() || !body.parentBookId?.trim()) {
+      return c.json({ error: "title and parentBookId are required" }, 400);
+    }
+    let parent;
+    try {
+      parent = await state.loadBookConfig(body.parentBookId);
+    } catch {
+      return c.json({ error: `Parent book "${body.parentBookId}" not found` }, 404);
+    }
+    const now = new Date().toISOString();
+    const bookId = body.title.toLowerCase().replace(/[^a-z0-9一-鿿]/g, "-").replace(/-+/g, "-").slice(0, 30);
+    const language = (body.language ?? parent.language) as "zh" | "en" | undefined;
+    const bookConfig = {
+      id: bookId,
+      title: body.title,
+      platform: (body.platform ?? parent.platform ?? "other") as "other",
+      genre: (body.genre ?? parent.genre ?? "other") as "xuanhuan",
+      status: "outlining" as const,
+      targetChapters: body.targetChapters ?? 100,
+      chapterWordCount: body.chapterWordCount ?? 3000,
+      ...(language ? { language } : {}),
+      createdAt: now,
+      updatedAt: now,
+    };
+    broadcast("spinoff:start", { bookId, title: body.title, parentBookId: body.parentBookId });
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      await pipeline.initSpinoffBook(bookConfig, body.parentBookId, body.direction);
+      broadcast("spinoff:complete", { bookId });
+      return c.json({ ok: true, bookId });
+    } catch (e) {
+      broadcast("spinoff:error", { bookId, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Imitation (仿写) init: original story imitating a reference work's style ---
+
+  app.post("/api/v1/imitation/init", async (c) => {
+    const body = await c.req.json<{
+      title: string; referenceText: string; storyIdea: string; sourceName?: string;
+      genre?: string; platform?: string;
+      targetChapters?: number; chapterWordCount?: number; language?: string;
+    }>();
+    if (!body.title?.trim() || !body.referenceText?.trim() || !body.storyIdea?.trim()) {
+      return c.json({ error: "title, referenceText and storyIdea are required" }, 400);
+    }
+    const now = new Date().toISOString();
+    const bookId = body.title.toLowerCase().replace(/[^a-z0-9一-鿿]/g, "-").replace(/-+/g, "-").slice(0, 30);
+    const bookConfig = {
+      id: bookId,
+      title: body.title,
+      platform: (body.platform ?? "other") as "other",
+      genre: (body.genre ?? "other") as "xuanhuan",
+      status: "outlining" as const,
+      targetChapters: body.targetChapters ?? 100,
+      chapterWordCount: body.chapterWordCount ?? 3000,
+      ...(body.language ? { language: body.language as "zh" | "en" } : {}),
+      createdAt: now,
+      updatedAt: now,
+    };
+    broadcast("imitation:start", { bookId, title: body.title });
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      await pipeline.initImitationBook(bookConfig, body.referenceText, body.storyIdea, body.sourceName);
+      broadcast("imitation:complete", { bookId });
+      return c.json({ ok: true, bookId });
+    } catch (e) {
+      broadcast("imitation:error", { bookId, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   // --- Radar Scan ---
 
   app.post("/api/v1/radar/scan", async (c) => {
