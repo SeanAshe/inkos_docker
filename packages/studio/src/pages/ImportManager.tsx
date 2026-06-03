@@ -231,14 +231,14 @@ export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: 
             <div className="grid grid-cols-3 gap-3">
               <select value={ffMode} onChange={(e) => setFfMode(e.target.value)}
                 className="px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
-                <option value="canon">Canon</option>
-                <option value="au">AU</option>
-                <option value="ooc">OOC</option>
-                <option value="cp">CP</option>
+                <option value="canon">原著向</option>
+                <option value="au">架空 AU</option>
+                <option value="ooc">性格偏离 OOC</option>
+                <option value="cp">配对 CP</option>
               </select>
               <select value={ffGenre} onChange={(e) => setFfGenre(e.target.value)}
                 className="px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
-                <option value="other">Other</option>
+                <option value="other">其他</option>
                 <option value="xuanhuan">玄幻</option>
                 <option value="urban">都市</option>
                 <option value="xianxia">仙侠</option>
@@ -293,7 +293,7 @@ export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: 
             <div className="grid grid-cols-2 gap-3">
               <select value={imGenre} onChange={(e) => setImGenre(e.target.value)}
                 className="px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
-                <option value="other">Other</option>
+                <option value="other">其他</option>
                 <option value="xuanhuan">玄幻</option>
                 <option value="urban">都市</option>
                 <option value="xianxia">仙侠</option>
