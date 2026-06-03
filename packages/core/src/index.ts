@@ -416,6 +416,13 @@ export { resolveEffectiveLLMConfig, type EffectiveLLMConfigResult, type Effectiv
 export { loadLLMEnvLayers, mergeEnvMaps, studioIgnoredEnv, cliOverlayEnv, legacyEnv, type LLMEnvLayers, type LLMEnvMap } from "./utils/llm-env.js";
 export { computeAnalytics, type AnalyticsData, type TokenStats } from "./utils/analytics.js";
 export {
+  evaluateBookQuality,
+  computeChapterEvalScore,
+  type BookEval,
+  type ChapterEval,
+  type EvaluateBookQualityOptions,
+} from "./utils/book-eval.js";
+export {
   collectStaleHookDebt,
   evaluateHookAdmission,
   classifyHookDisposition,

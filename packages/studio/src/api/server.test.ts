@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 const schedulerStartMock = vi.fn<() => Promise<void>>();
 const initBookMock = vi.fn();
 const runRadarMock = vi.fn();
+const planChapterMock = vi.fn();
+const composeChapterMock = vi.fn();
+const repairChapterStateMock = vi.fn();
+const reviseFoundationMock = vi.fn();
+const consolidateMock = vi.fn();
+const evaluateBookQualityMock = vi.fn();
 const reviseDraftMock = vi.fn();
 const resyncChapterArtifactsMock = vi.fn();
 const writeNextChapterMock = vi.fn();
@@ -175,9 +181,19 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
 
     initBook = initBookMock;
     runRadar = runRadarMock;
+    planChapter = planChapterMock;
+    composeChapter = composeChapterMock;
+    repairChapterState = repairChapterStateMock;
+    reviseFoundation = reviseFoundationMock;
     reviseDraft = reviseDraftMock;
     resyncChapterArtifacts = resyncChapterArtifactsMock;
     writeNextChapter = writeNextChapterMock;
+  }
+
+  class MockConsolidatorAgent {
+    constructor(_config: unknown) {}
+
+    consolidate = consolidateMock;
   }
 
   class MockPlayRunner {
@@ -213,6 +229,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     Scheduler: MockScheduler,
     createLLMClient: createLLMClientMock,
     createLogger: vi.fn(() => logger),
+    evaluateBookQuality: evaluateBookQualityMock,
     computeAnalytics: vi.fn(() => ({})),
     isSafeBookId: actual.isSafeBookId,
     normalizePlatformOrOther: actual.normalizePlatformOrOther,
@@ -226,6 +243,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     resolveSessionActiveBook: resolveSessionActiveBookMock,
     runAgentSession: runAgentSessionMock,
     PlayRunner: MockPlayRunner,
+    ConsolidatorAgent: MockConsolidatorAgent,
     PlayStore: actual.PlayStore,
     createPlayDB: actual.createPlayDB,
     buildPlayEntityImagePrompt: actual.buildPlayEntityImagePrompt,
@@ -268,6 +286,8 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     fetchWithProxy: vi.fn((input: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(input, init)),
     GLOBAL_ENV_PATH: join(tmpdir(), "inkos-global.env"),
     SessionKindSchema: actual.SessionKindSchema,
+    DetectionConfigSchema: actual.DetectionConfigSchema,
+    InputGovernanceModeSchema: actual.InputGovernanceModeSchema,
     isWriteNextInstruction: actual.isWriteNextInstruction,
     normalizeActionSource: actual.normalizeActionSource,
     normalizePlayMode: actual.normalizePlayMode,
@@ -316,6 +336,12 @@ describe("createStudioServer daemon lifecycle", () => {
     schedulerStartMock.mockReset();
     initBookMock.mockReset();
     runRadarMock.mockReset();
+    planChapterMock.mockReset();
+    composeChapterMock.mockReset();
+    repairChapterStateMock.mockReset();
+    reviseFoundationMock.mockReset();
+    consolidateMock.mockReset();
+    evaluateBookQualityMock.mockReset();
     reviseDraftMock.mockReset();
     resyncChapterArtifactsMock.mockReset();
     writeNextChapterMock.mockReset();
@@ -328,6 +354,31 @@ describe("createStudioServer daemon lifecycle", () => {
     runRadarMock.mockResolvedValue({
       marketSummary: "Fresh market summary",
       recommendations: [],
+    });
+    planChapterMock.mockResolvedValue({ chapterNumber: 3, title: "Planned Chapter", memo: "plan memo" });
+    composeChapterMock.mockResolvedValue({ chapterNumber: 3, title: "Composed Chapter", plan: "chapter plan" });
+    repairChapterStateMock.mockResolvedValue({
+      chapterNumber: 3,
+      title: "Repaired Chapter",
+      wordCount: 1800,
+      revised: false,
+      status: "ready-for-review",
+      auditResult: { passed: true, issues: [], summary: "repaired" },
+    });
+    reviseFoundationMock.mockResolvedValue(undefined);
+    consolidateMock.mockResolvedValue({ archivedVolumes: 1, retainedChapters: 8 });
+    evaluateBookQualityMock.mockResolvedValue({
+      bookId: "demo-book",
+      totalChapters: 1,
+      totalWords: 1800,
+      auditPassRate: 100,
+      avgAiTellDensity: 0,
+      avgParagraphWarnings: 0,
+      hookResolveRate: 100,
+      duplicateTitles: 0,
+      qualityScore: 100,
+      chapters: [],
+      qualityTrend: [],
     });
     reviseDraftMock.mockResolvedValue({
       chapterNumber: 3,
@@ -3483,6 +3534,79 @@ describe("createStudioServer daemon lifecycle", () => {
 
     const after = await app.request("http://localhost/api/v1/project/chapter-review-mode");
     await expect(after.json()).resolves.toMatchObject({ mode: "manual" });
+  });
+
+  it("project advanced settings expose input governance and detection config", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const modeInitial = await app.request("http://localhost/api/v1/project/input-governance-mode");
+    await expect(modeInitial.json()).resolves.toMatchObject({ mode: "v2" });
+
+    const modePut = await app.request("http://localhost/api/v1/project/input-governance-mode", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "legacy" }),
+    });
+    await expect(modePut.json()).resolves.toMatchObject({ ok: true, mode: "legacy" });
+
+    const detectionPut = await app.request("http://localhost/api/v1/project/detection", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        detection: {
+          enabled: true,
+          provider: "custom",
+          apiUrl: "https://detector.example.com/api",
+          apiKeyEnv: "DETECT_KEY",
+          threshold: 0.6,
+          autoRewrite: false,
+          maxRetries: 2,
+        },
+      }),
+    });
+    await expect(detectionPut.json()).resolves.toMatchObject({ ok: true });
+
+    const detectionAfter = await app.request("http://localhost/api/v1/project/detection");
+    await expect(detectionAfter.json()).resolves.toMatchObject({
+      detection: { enabled: true, threshold: 0.6, maxRetries: 2 },
+    });
+  });
+
+  it("exposes CLI-parity book actions through Studio endpoints", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const evalRes = await app.request("http://localhost/api/v1/books/demo-book/eval");
+    await expect(evalRes.json()).resolves.toMatchObject({ bookId: "demo-book", qualityScore: 100 });
+    expect(evaluateBookQualityMock).toHaveBeenCalledWith(expect.objectContaining({ bookId: "demo-book" }));
+
+    const consolidateRes = await app.request("http://localhost/api/v1/books/demo-book/consolidate", { method: "POST" });
+    await expect(consolidateRes.json()).resolves.toMatchObject({ archivedVolumes: 1, retainedChapters: 8 });
+    expect(consolidateMock).toHaveBeenCalled();
+
+    const planRes = await app.request("http://localhost/api/v1/books/demo-book/plan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context: "focus on the debtor" }),
+    });
+    await expect(planRes.json()).resolves.toMatchObject({ chapterNumber: 3 });
+    expect(planChapterMock).toHaveBeenCalledWith("demo-book", "focus on the debtor");
+
+    const composeRes = await app.request("http://localhost/api/v1/books/demo-book/compose", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context: "use the plan" }),
+    });
+    await expect(composeRes.json()).resolves.toMatchObject({ chapterNumber: 3 });
+    expect(composeChapterMock).toHaveBeenCalledWith("demo-book", "use the plan");
+
+    const repairRes = await app.request("http://localhost/api/v1/books/demo-book/repair-state/3", { method: "POST" });
+    await expect(repairRes.json()).resolves.toMatchObject({ chapterNumber: 3, status: "ready-for-review" });
+    expect(repairChapterStateMock).toHaveBeenCalledWith("demo-book", 3);
+
+    const reviseFoundationRes = await app.request("http://localhost/api/v1/books/demo-book/foundation/revise", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ feedback: "make the protagonist colder" }),
+    });
+    await expect(reviseFoundationRes.json()).resolves.toMatchObject({ ok: true });
+    expect(reviseFoundationMock).toHaveBeenCalledWith("demo-book", "make the protagonist colder");
   });
 
 });

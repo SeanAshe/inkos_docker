@@ -37,6 +37,10 @@ import {
   fetchWithProxy,
   chatCompletion,
   buildExportArtifact,
+  evaluateBookQuality,
+  ConsolidatorAgent,
+  DetectionConfigSchema,
+  InputGovernanceModeSchema,
   GLOBAL_ENV_PATH,
   COVER_PROVIDER_PRESETS,
   createPlayDB,
@@ -1779,6 +1783,87 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ status: "drafting", bookId: id });
   });
 
+  app.get("/api/v1/books/:id/eval", async (c) => {
+    const id = c.req.param("id");
+    const chapters = c.req.query("chapters");
+    try {
+      return c.json(await evaluateBookQuality({ state, bookId: id, chapters }));
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.post("/api/v1/books/:id/consolidate", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const pipelineConfig = await buildPipelineConfig();
+      const consolidator = new ConsolidatorAgent({
+        client: pipelineConfig.client,
+        model: pipelineConfig.model,
+        projectRoot: root,
+      });
+      const result = await consolidator.consolidate(state.bookDir(id));
+      broadcast("consolidate:complete", { bookId: id, ...result });
+      return c.json(result);
+    } catch (e) {
+      broadcast("consolidate:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.post("/api/v1/books/:id/plan", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ context?: string }>().catch(() => ({ context: undefined }));
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      return c.json(await pipeline.planChapter(id, body.context));
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.post("/api/v1/books/:id/compose", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ context?: string }>().catch(() => ({ context: undefined }));
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      return c.json(await pipeline.composeChapter(id, body.context));
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.post("/api/v1/books/:id/repair-state/:chapter", async (c) => {
+    const id = c.req.param("id");
+    const chapterNum = parseInt(c.req.param("chapter"), 10);
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const result = await pipeline.repairChapterState(id, chapterNum);
+      broadcast("repair-state:complete", { bookId: id, chapter: chapterNum });
+      return c.json(result);
+    } catch (e) {
+      broadcast("repair-state:error", { bookId: id, chapter: chapterNum, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.post("/api/v1/books/:id/foundation/revise", async (c) => {
+    const id = c.req.param("id");
+    const { feedback } = await c.req.json<{ feedback?: string }>().catch(() => ({ feedback: undefined }));
+    if (!feedback?.trim()) {
+      return c.json({ error: "feedback is required" }, 400);
+    }
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      await pipeline.reviseFoundation(id, feedback.trim());
+      broadcast("foundation:revised", { bookId: id });
+      return c.json({ ok: true });
+    } catch (e) {
+      broadcast("foundation:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   app.post("/api/v1/books/:id/chapters/:num/approve", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
@@ -2322,6 +2407,48 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
+  });
+
+  app.get("/api/v1/project/input-governance-mode", async (c) => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    return c.json({ mode: raw.inputGovernanceMode === "legacy" ? "legacy" : "v2" });
+  });
+
+  app.put("/api/v1/project/input-governance-mode", async (c) => {
+    const { mode } = await c.req.json<{ mode?: unknown }>();
+    const parsed = InputGovernanceModeSchema.safeParse(mode);
+    if (!parsed.success) {
+      return c.json({ error: "mode must be legacy or v2" }, 400);
+    }
+    const configPath = join(root, "inkos.json");
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
+    raw.inputGovernanceMode = parsed.data;
+    const { writeFile: writeFileFs } = await import("node:fs/promises");
+    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    return c.json({ ok: true, mode: parsed.data });
+  });
+
+  app.get("/api/v1/project/detection", async (c) => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    return c.json({ detection: raw.detection ?? null });
+  });
+
+  app.put("/api/v1/project/detection", async (c) => {
+    const { detection } = await c.req.json<{ detection?: unknown }>();
+    const configPath = join(root, "inkos.json");
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
+    if (detection === null) {
+      delete raw.detection;
+    } else {
+      const parsed = DetectionConfigSchema.safeParse(detection);
+      if (!parsed.success) {
+        return c.json({ error: parsed.error.issues.map((issue) => issue.message).join("; ") }, 400);
+      }
+      raw.detection = parsed.data;
+    }
+    const { writeFile: writeFileFs } = await import("node:fs/promises");
+    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    return c.json({ ok: true, detection: raw.detection ?? null });
   });
 
   // --- Truth files browser ---
