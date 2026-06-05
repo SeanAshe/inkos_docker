@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
-import type { ChatRequestedIntent, ChatSessionKind, ToolExecution, PipelineStage } from "../../store/chat/types";
+import type { ChatActionPayload, ChatRequestedIntent, ChatSessionKind, ToolExecution, PipelineStage } from "../../store/chat/types";
 import {
   Collapsible,
   CollapsibleTrigger,
@@ -115,11 +115,12 @@ export interface ProposedActionDetails {
   readonly execId: string;
   readonly action: ChatRequestedIntent;
   readonly targetSessionKind: ChatSessionKind;
-  readonly targetRoute?: "import:fanfic" | "import:chapters" | "import:canon" | "style";
+  readonly targetRoute?: "import:fanfic" | "import:chapters" | "import:canon" | "import:spinoff" | "import:imitation" | "style";
   readonly sameSession?: boolean;
   readonly title?: string;
   readonly summary?: string;
   readonly instruction?: string;
+  readonly actionPayload?: ChatActionPayload;
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
@@ -132,9 +133,22 @@ function booleanField(record: Record<string, unknown>, key: string): boolean | u
   return typeof value === "boolean" ? value : undefined;
 }
 
+function actionPayloadField(record: Record<string, unknown>): ChatActionPayload | undefined {
+  const value = record.actionPayload;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as ChatActionPayload;
+}
+
 function proposedTargetRouteField(record: Record<string, unknown>): ProposedActionDetails["targetRoute"] {
   const value = stringField(record, "targetRoute");
-  if (value === "import:fanfic" || value === "import:chapters" || value === "import:canon" || value === "style") {
+  if (
+    value === "import:fanfic"
+    || value === "import:chapters"
+    || value === "import:canon"
+    || value === "import:spinoff"
+    || value === "import:imitation"
+    || value === "style"
+  ) {
     return value;
   }
   return undefined;
@@ -227,6 +241,7 @@ export function getProposedActionDetails(exec: ToolExecution): ProposedActionDet
     title: stringField(record, "title"),
     summary: stringField(record, "summary"),
     instruction,
+    actionPayload: actionPayloadField(record),
   };
 }
 

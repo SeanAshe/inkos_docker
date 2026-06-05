@@ -92,6 +92,20 @@ vi.mock("@mariozechner/pi-ai", async () => {
             { type: "thinking", thinking: "raw thought", thinkingSignature: "sig-1" },
             { type: "text", text: "ok" },
           ], timestamp)
+        : prompt === "propose short"
+        ? assistant([
+            {
+              type: "toolCall",
+              id: "proposal-1",
+              name: "propose_action",
+              arguments: {
+                action: "short_run",
+                title: "生成短篇",
+                summary: "确认后生成一篇短篇。",
+                instruction: "生成一篇短篇。",
+              },
+            },
+          ], timestamp)
         : prompt === "use tool"
           ? assistant([
               {
@@ -530,6 +544,24 @@ describe("runAgentSession cache — bookId switch", () => {
     ]);
   });
 
+  it("does not run a hidden repair prompt when book-create returns plain text", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+
+    const result = await runAgentSession(
+      { sessionId: "book-create-repair-session", bookId: null, sessionKind: "book-create", language: "zh", pipeline, projectRoot, model },
+      "请建一本番茄长篇",
+    );
+
+    expect(result.responseText).toBe("ok");
+    expect(streamCalls).toHaveLength(1);
+    expect(result.messages).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "toolResult", toolName: "propose_action" }),
+      ]),
+    );
+  });
+
   it("exposes architect delegation after book-create confirmation", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;
@@ -573,6 +605,24 @@ describe("runAgentSession cache — bookId switch", () => {
     expect(agentInstances[1].state.tools.map((tool: any) => tool.name)).toEqual([
       "propose_action",
     ]);
+  });
+
+  it("treats propose_action as a terminal UI proposal instead of asking the model to continue", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+
+    const result = await runAgentSession(
+      { sessionId: "short-session", bookId: null, sessionKind: "short", language: "zh", pipeline, projectRoot, model },
+      "propose short",
+    );
+
+    expect(result.responseText).toBe("");
+    expect(streamCalls).toHaveLength(1);
+    expect(result.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "toolResult", toolName: "propose_action" }),
+      ]),
+    );
   });
 
   it("exposes play_step only after the play world exists for this session", async () => {

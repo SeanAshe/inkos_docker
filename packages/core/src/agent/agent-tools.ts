@@ -17,6 +17,7 @@ import { createPlayDB, type PlayGraphDB } from "../play/play-db-factory.js";
 import { PlayRunner, type PlayStepResult } from "../play/play-runner.js";
 import { PlayStore } from "../play/play-store.js";
 import type { AgentContext } from "../agents/base.js";
+import type { ActionPayload } from "../interaction/action-envelope.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -95,10 +96,74 @@ const ProposeActionParams = Type.Object({
   summary: Type.Optional(Type.String({
     description: "One or two sentences explaining what will happen if the user confirms.",
   })),
+  createBook: Type.Optional(Type.Object({
+    title: Type.Optional(Type.String({
+      description: "Confirmed long-form book title.",
+    })),
+    genre: Type.Optional(Type.String({
+      description: "Confirmed book genre/category.",
+    })),
+    platform: Type.Optional(Type.Union([
+      Type.Literal("tomato"),
+      Type.Literal("qidian"),
+      Type.Literal("feilu"),
+      Type.Literal("other"),
+    ], { description: "Confirmed target platform, e.g. tomato for 番茄." })),
+    language: Type.Optional(Type.Union([
+      Type.Literal("zh"),
+      Type.Literal("en"),
+    ], { description: "Confirmed writing language." })),
+    targetChapters: Type.Optional(Type.Number({
+      description: "Confirmed total chapter count.",
+    })),
+    chapterWordCount: Type.Optional(Type.Number({
+      description: "Confirmed per-chapter length in the book's native unit.",
+    })),
+  }, { description: "Structured execution args for action=create_book. Put platform/length here; do not leave them only in instruction text." })),
+  shortRun: Type.Optional(Type.Object({
+    direction: Type.Optional(Type.String({
+      description: "Confirmed standalone short direction.",
+    })),
+    reference: Type.Optional(Type.String({
+      description: "Optional confirmed reference notes or constraints.",
+    })),
+    storyId: Type.Optional(Type.String({
+      description: "Optional confirmed output id under shorts/.",
+    })),
+    chapters: Type.Optional(Type.Number({
+      description: "Confirmed complete short chapter count, 12-18.",
+    })),
+    charsPerChapter: Type.Optional(Type.Number({
+      description: "Confirmed Chinese characters per chapter, 900-1200. Do not put total story length here.",
+    })),
+    cover: Type.Optional(Type.Boolean({
+      description: "Whether to attempt cover generation.",
+    })),
+  }, { description: "Structured execution args for action=short_run." })),
+  playStart: Type.Optional(Type.Object({
+    title: Type.Optional(Type.String({ description: "Confirmed interactive world title." })),
+    premise: Type.Optional(Type.String({ description: "Confirmed playable premise." })),
+    mode: Type.Optional(Type.Union([
+      Type.Literal("open"),
+      Type.Literal("guided"),
+    ], { description: "Confirmed play mode: open for free actions, guided for suggested choices." })),
+    initialScene: Type.Optional(Type.String({ description: "Confirmed opening playable scene." })),
+    suggestedActions: Type.Optional(Type.Array(Type.String({ description: "2-4 confirmed immediate actions." }))),
+  }, { description: "Structured execution args for action=play_start." })),
+  generateCover: Type.Optional(Type.Object({
+    title: Type.Optional(Type.String({ description: "Confirmed cover title." })),
+    intro: Type.Optional(Type.String({ description: "Confirmed synopsis/hook for the cover." })),
+    sellingPoints: Type.Optional(Type.String({ description: "Confirmed selling points for the cover." })),
+    coverPrompt: Type.Optional(Type.String({ description: "Confirmed visual direction." })),
+    outputDir: Type.Optional(Type.String({ description: "Confirmed output directory." })),
+  }, { description: "Structured execution args for action=generate_cover." })),
 });
 
 type ProposeActionParamsType = Static<typeof ProposeActionParams>;
-type ProposedActionTargetRoute = "import:fanfic" | "import:chapters" | "import:canon" | "style";
+type ProposedActionTargetRoute = "import:fanfic" | "import:chapters" | "import:canon" | "import:spinoff" | "import:imitation" | "style";
+type ProposeActionToolOptions = {
+  readonly sameSession?: boolean;
+};
 
 function proposedActionSessionKind(action: ProposeActionParamsType["action"]): "book-create" | "short" | "play" | "chat" {
   if (action === "create_book") return "book-create";
@@ -110,8 +175,8 @@ function proposedActionSessionKind(action: ProposeActionParamsType["action"]): "
 function proposedActionTargetRoute(action: ProposeActionParamsType["action"]): ProposedActionTargetRoute | undefined {
   if (action === "fanfic_init") return "import:fanfic";
   if (action === "continuation_import") return "import:chapters";
-  if (action === "spinoff_create") return "import:canon";
-  if (action === "style_imitation") return "style";
+  if (action === "spinoff_create") return "import:spinoff";
+  if (action === "style_imitation") return "import:imitation";
   return undefined;
 }
 
@@ -147,9 +212,52 @@ function proposedActionFallbackSummary(action: ProposeActionParamsType["action"]
     : "After confirmation, InkOS will switch to the matching surface and run this request.";
 }
 
+function compactObject<T extends Record<string, unknown>>(value: T | undefined): T | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "string") {
+      const text = raw.trim();
+      if (text) out[key] = text;
+      continue;
+    }
+    if (Array.isArray(raw)) {
+      const items = raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .map((item) => item.trim());
+      if (items.length > 0) out[key] = items;
+      continue;
+    }
+    if (raw !== undefined && raw !== null) {
+      out[key] = raw;
+    }
+  }
+  return Object.keys(out).length > 0 ? out as T : undefined;
+}
+
+function proposedActionPayload(params: ProposeActionParamsType): ActionPayload | undefined {
+  const payload: ActionPayload = {};
+  if (params.action === "create_book") {
+    const createBook = compactObject(params.createBook);
+    if (createBook) payload.createBook = createBook;
+  }
+  if (params.action === "short_run") {
+    const shortRun = compactObject(params.shortRun);
+    if (shortRun) payload.shortRun = shortRun;
+  }
+  if (params.action === "play_start") {
+    const playStart = compactObject(params.playStart);
+    if (playStart) payload.playStart = playStart;
+  }
+  if (params.action === "generate_cover") {
+    const generateCover = compactObject(params.generateCover);
+    if (generateCover) payload.generateCover = generateCover;
+  }
+  return Object.keys(payload).length > 0 ? payload : undefined;
+}
+
 export function createProposeActionTool(
   language: "zh" | "en" = "zh",
-  options: { readonly sameSession?: boolean } = {},
+  options: ProposeActionToolOptions = {},
 ): AgentTool<typeof ProposeActionParams> {
   return {
     name: "propose_action",
@@ -164,6 +272,7 @@ export function createProposeActionTool(
       const isZh = language === "zh";
       const title = params.title?.trim() || proposedActionFallbackTitle(params.action, isZh);
       const summary = params.summary?.trim() || proposedActionFallbackSummary(params.action, isZh);
+      const actionPayload = proposedActionPayload(params);
       return textResult(
         [
           title,
@@ -180,6 +289,7 @@ export function createProposeActionTool(
           title,
           summary,
           instruction: params.instruction,
+          ...(actionPayload ? { actionPayload } : {}),
         },
       );
     },
@@ -264,6 +374,7 @@ export function createSubAgentTool(
   pipeline: PipelineRunner,
   activeBookId: string | null,
   projectRoot?: string,
+  options: { readonly actionPayload?: ActionPayload } = {},
 ): AgentTool<typeof SubAgentParams> {
   return {
     name: "sub_agent",
@@ -296,6 +407,7 @@ export function createSubAgentTool(
 
         switch (agent) {
           case "architect": {
+            const createBookPayload = options.actionPayload?.createBook;
             if (revise) {
               if (!activeBookId) {
                 return textResult("Open the book first before revising its foundation.");
@@ -308,7 +420,7 @@ export function createSubAgentTool(
                 `Book "${targetBookId}" 架构稿已按要求重写。原书的条目式架构稿已备份到 story/.backup-phase4-<时间戳>/。`,
               );
             }
-            const resolvedTitle = title?.trim();
+            const resolvedTitle = createBookPayload?.title?.trim() || title?.trim();
             if (!resolvedTitle) {
               return textResult('Error: title is required for the architect agent.');
             }
@@ -316,18 +428,18 @@ export function createSubAgentTool(
               ? assertSafeBookId(bookId, "architect.bookId")
               : deriveBookIdFromTitle(resolvedTitle) || `book-${Date.now().toString(36)}`;
             const now = new Date().toISOString();
-            const resolvedLanguage = language ?? inferLanguage(instruction);
+            const resolvedLanguage = createBookPayload?.language ?? language ?? inferLanguage(instruction);
             progress(`Starting architect for book "${id}"...`);
             await pipeline.initBook(
               {
                 id,
                 title: resolvedTitle,
-                genre: genre ?? "general",
-                platform: normalizePlatformOrOther(platform),
+                genre: createBookPayload?.genre ?? genre ?? "general",
+                platform: normalizePlatformOrOther(createBookPayload?.platform ?? platform),
                 language: resolvedLanguage as any,
                 status: "outlining" as any,
-                targetChapters: targetChapters ?? 200,
-                chapterWordCount: chapterWordCount ?? defaultChapterLength(resolvedLanguage),
+                targetChapters: createBookPayload?.targetChapters ?? targetChapters ?? 200,
+                chapterWordCount: createBookPayload?.chapterWordCount ?? chapterWordCount ?? defaultChapterLength(resolvedLanguage),
                 createdAt: now,
                 updatedAt: now,
               },
@@ -429,8 +541,8 @@ const ShortFictionRunParams = Type.Object({
   chapters: Type.Optional(Type.Number({
     description: "Target complete short chapter count, 12-18. Default 12.",
   })),
-  chars: Type.Optional(Type.Number({
-    description: "Target Chinese characters per chapter, 900-1200. Default 1000.",
+  charsPerChapter: Type.Optional(Type.Number({
+    description: "Target Chinese characters per chapter, 900-1200. Default 1000. Do not use total story length here.",
   })),
   cover: Type.Optional(Type.Boolean({
     description: "Whether to attempt cover image generation after synopsis and cover prompt. Default true; use false if the user only wants text assets.",
@@ -457,6 +569,7 @@ type ShortFictionRunParamsType = Static<typeof ShortFictionRunParams>;
 export function createShortFictionRunTool(
   pipeline: PipelineRunner,
   projectRoot: string,
+  options: { readonly actionPayload?: ActionPayload } = {},
 ): AgentTool<typeof ShortFictionRunParams> {
   return {
     name: "short_fiction_run",
@@ -473,9 +586,10 @@ export function createShortFictionRunTool(
       onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
       const progress = (message: string) => onUpdate?.(textResult(message));
+      const shortPayload = options.actionPayload?.shortRun;
       const result = await runShortFictionProduction({
         projectRoot,
-        direction: params.direction,
+        direction: shortPayload?.direction ?? params.direction,
         runtimes: {
           planner: pipeline.createAgentContext("short-outline"),
           outlineReview: pipeline.createAgentContext("short-outline-review"),
@@ -484,11 +598,11 @@ export function createShortFictionRunTool(
           revise: pipeline.createAgentContext("short-revise"),
           package: pipeline.createAgentContext("short-package"),
         },
-        ...(params.reference ? { reference: { text: params.reference } } : {}),
-        storyId: params.storyId,
-        chapterCount: params.chapters,
-        charsPerChapter: params.chars,
-        cover: params.cover,
+        ...((shortPayload?.reference ?? params.reference) ? { reference: { text: shortPayload?.reference ?? params.reference! } } : {}),
+        storyId: shortPayload?.storyId ?? params.storyId,
+        chapterCount: shortPayload?.chapters ?? params.chapters,
+        charsPerChapter: shortPayload?.charsPerChapter ?? params.charsPerChapter,
+        cover: shortPayload?.cover ?? params.cover,
         coverBaseUrl: params.coverBaseUrl,
         coverEndpoint: params.coverEndpoint,
         coverModel: params.coverModel,
@@ -572,6 +686,7 @@ type GenerateCoverParamsType = Static<typeof GenerateCoverParams>;
 
 export function createGenerateCoverTool(
   projectRoot: string,
+  options: { readonly actionPayload?: ActionPayload } = {},
 ): AgentTool<typeof GenerateCoverParams> {
   return {
     name: "generate_cover",
@@ -587,13 +702,14 @@ export function createGenerateCoverTool(
       onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
       onUpdate?.(textResult("Generating cover image..."));
+      const coverPayload = options.actionPayload?.generateCover;
       const result = await generateShortFictionCover({
         projectRoot,
-        title: params.title,
-        intro: params.intro,
-        sellingPoints: params.sellingPoints,
-        coverPrompt: params.coverPrompt,
-        outputDir: params.outputDir,
+        title: coverPayload?.title ?? params.title,
+        intro: coverPayload?.intro ?? params.intro,
+        sellingPoints: coverPayload?.sellingPoints ?? params.sellingPoints,
+        coverPrompt: coverPayload?.coverPrompt ?? params.coverPrompt,
+        outputDir: coverPayload?.outputDir ?? params.outputDir,
         coverBaseUrl: params.coverBaseUrl,
         coverEndpoint: params.coverEndpoint,
         coverModel: params.coverModel,
@@ -641,6 +757,7 @@ export function createPlayStartTool(
   projectRoot: string,
   sessionId: string,
   playMode?: "open" | "guided",
+  options: { readonly actionPayload?: ActionPayload } = {},
 ): AgentTool<typeof PlayStartParams> {
   return {
     name: "play_start",
@@ -656,24 +773,28 @@ export function createPlayStartTool(
       onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
       onUpdate?.(textResult("Starting interactive world..."));
+      const playPayload = options.actionPayload?.playStart;
       const store = new PlayStore(projectRoot);
       // The play world is bound 1:1 to the chat session: worldId IS the
       // sessionId. This removes any "which world?" ambiguity, so two play
       // sessions never advance each other's world.
       const worldId = safePlayId(sessionId, sessionId);
       const runId = "main";
-      const playLanguage = inferLanguage([params.title, params.premise, params.initialScene].filter(Boolean).join("\n"));
+      const title = playPayload?.title ?? params.title;
+      const premise = playPayload?.premise ?? params.premise;
+      const initialScene = playPayload?.initialScene ?? params.initialScene;
+      const playLanguage = inferLanguage([title, premise, initialScene].filter(Boolean).join("\n"));
       const world = await store.createWorld({
         id: worldId,
-        title: params.title.trim(),
-        premise: params.premise?.trim() ?? "",
+        title: title.trim(),
+        premise: premise?.trim() ?? "",
         mode: playMode ?? params.mode ?? "open",
         language: playLanguage,
       });
       await store.ensureRun(world.id, runId);
 
       const existingTranscript = await store.readTranscript(world.id, runId);
-      const sceneText = (params.initialScene?.trim() || (world.language === "en"
+      const sceneText = (initialScene?.trim() || (world.language === "en"
         ? [`You enter "${world.title}".`, world.premise || "The scene is set. Make your first move."].join("\n")
         : [`你进入「${world.title}」。`, world.premise || "场景已经就位，等待你的第一个动作。"].join("\n"))).trim();
       if (existingTranscript.length === 0) {
@@ -692,7 +813,7 @@ export function createPlayStartTool(
         });
       }
 
-      const suggestedActions = (params.suggestedActions ?? [])
+      const suggestedActions = (playPayload?.suggestedActions ?? params.suggestedActions ?? [])
         .map((item) => item.trim())
         .filter(Boolean)
         .slice(0, 4);

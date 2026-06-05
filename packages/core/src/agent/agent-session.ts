@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
-import { streamSimple, getModel, getEnvApiKey } from "@mariozechner/pi-ai";
+import { streamSimple, getModel, getEnvApiKey, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import type {
   Model,
   Api,
@@ -43,7 +43,7 @@ import {
 } from "../interaction/session-transcript-restore.js";
 import type { TranscriptEvent, TranscriptRole } from "../interaction/session-transcript-schema.js";
 import type { PlayMode, SessionKind } from "../interaction/session.js";
-import type { ActionSource, RequestedIntent } from "../interaction/action-envelope.js";
+import type { ActionPayload, ActionSource, RequestedIntent } from "../interaction/action-envelope.js";
 import { assertSafeBookId } from "../utils/book-id.js";
 import { PlayStore } from "../play/play-store.js";
 
@@ -64,6 +64,8 @@ export interface AgentSessionConfig {
   actionSource?: ActionSource;
   /** Explicit user-confirmed action requested by the UI/command surface. */
   requestedIntent?: RequestedIntent;
+  /** Structured execution arguments confirmed by the UI/command surface. */
+  actionPayload?: ActionPayload;
   /** Language for the system prompt. */
   language: string;
   /** PipelineRunner for sub-agent tool delegation. */
@@ -101,6 +103,7 @@ interface CachedAgent {
   sessionKind: SessionKind;
   actionSource: NonNullable<AgentSessionConfig["actionSource"]>;
   requestedIntent: AgentSessionConfig["requestedIntent"];
+  actionPayloadKey: string;
   playWorldExists: boolean;
   language: string;
   modelIdentity: string;
@@ -115,6 +118,15 @@ const agentSessionQueues = new Map<string, Promise<void>>();
 
 /** TTL for cached agents: 5 minutes. */
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+const EMPTY_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
 
 /** Cleanup interval handle (lazy-started). */
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -175,6 +187,10 @@ function agentModelIdentity(model: Model<Api>): string {
   ].join("::");
 }
 
+function actionPayloadCacheKey(payload: ActionPayload | undefined): string {
+  return payload ? JSON.stringify(payload) : "";
+}
+
 function sessionQueueKey(projectRoot: string, sessionId: string): string {
   return `${projectRoot}\0${sessionId}`;
 }
@@ -200,6 +216,34 @@ function guardedStreamSimple<TApi extends Api>(
     reservedOutputTokens,
   });
   return streamSimple(model, context, options);
+}
+
+function localAssistantStopStream(model: Model<Api>): AssistantMessageEventStream {
+  const stream = createAssistantMessageEventStream();
+  const message: AssistantMessage = {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: EMPTY_USAGE,
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+  queueMicrotask(() => {
+    stream.push({ type: "done", reason: "stop", message });
+    stream.end(message);
+  });
+  return stream;
+}
+
+function isTerminalProposalTail(messages: AgentMessage[]): boolean {
+  const last = messages.at(-1);
+  if (!last || typeof last !== "object" || !("role" in last)) return false;
+  if ((last as { role?: unknown }).role !== "toolResult") return false;
+  const toolName = (last as { toolName?: unknown }).toolName;
+  const isError = (last as { isError?: unknown }).isError;
+  return toolName === "propose_action" && isError !== true;
 }
 
 async function runInAgentSessionQueue<T>(
@@ -535,15 +579,18 @@ function createAgentToolsForMode(params: {
   readonly sessionKind: SessionKind;
   readonly actionSource: NonNullable<AgentSessionConfig["actionSource"]>;
   readonly requestedIntent: AgentSessionConfig["requestedIntent"];
+  readonly actionPayload: AgentSessionConfig["actionPayload"];
   readonly projectRoot: string;
   readonly allowSystemFileRead: boolean;
   readonly language: string;
   readonly playMode?: "open" | "guided";
   readonly playWorldExists: boolean;
 }) {
-  const subAgentTool = createSubAgentTool(params.pipeline, params.bookId, params.projectRoot);
+  const subAgentTool = createSubAgentTool(params.pipeline, params.bookId, params.projectRoot, { actionPayload: params.actionPayload });
   const lang = params.language === "en" ? "en" : "zh";
-  const proposalTool = createProposeActionTool(lang, { sameSession: params.sessionKind !== "chat" });
+  const proposalTool = createProposeActionTool(lang, {
+    sameSession: params.sessionKind !== "chat",
+  });
   const isConfirmed = (
     intent: NonNullable<AgentSessionConfig["requestedIntent"]>,
   ): boolean => {
@@ -557,17 +604,17 @@ function createAgentToolsForMode(params: {
 
   if (params.sessionKind === "short") {
     if (isConfirmed("short_run")) {
-      return [createShortFictionRunTool(params.pipeline, params.projectRoot)];
+      return [createShortFictionRunTool(params.pipeline, params.projectRoot, { actionPayload: params.actionPayload })];
     }
     if (isConfirmed("generate_cover")) {
-      return [createGenerateCoverTool(params.projectRoot)];
+      return [createGenerateCoverTool(params.projectRoot, { actionPayload: params.actionPayload })];
     }
     return [proposalTool];
   }
 
   if (params.sessionKind === "play") {
     if (isConfirmed("play_start")) {
-      return [createPlayStartTool(params.projectRoot, params.sessionId, params.playMode)];
+      return [createPlayStartTool(params.projectRoot, params.sessionId, params.playMode, { actionPayload: params.actionPayload })];
     }
     if (params.playWorldExists) {
       return [createPlayStepTool(params.pipeline, params.projectRoot, params.sessionId)];
@@ -588,7 +635,7 @@ function createAgentToolsForMode(params: {
 
   const bookTools = [
     subAgentTool,
-    createGenerateCoverTool(params.projectRoot),
+    createGenerateCoverTool(params.projectRoot, { actionPayload: params.actionPayload }),
     createReadTool(params.projectRoot, { allowSystemPaths: params.allowSystemFileRead }),
     createWriteTruthFileTool(params.pipeline, params.projectRoot, params.bookId),
     createRenameEntityTool(params.pipeline, params.projectRoot, params.bookId),
@@ -637,6 +684,8 @@ async function runAgentSessionUnlocked(
   const playMode = config.playMode;
   const actionSource = config.actionSource ?? "free-text";
   const requestedIntent = config.requestedIntent;
+  const actionPayload = config.actionPayload;
+  const actionPayloadKey = actionPayloadCacheKey(actionPayload);
   const model = resolveModel(config.model);
   const requestedModelIdentity = agentModelIdentity(model);
   const allowSystemFileRead = config.allowSystemFileRead ?? envFlagEnabled(process.env.INKOS_AGENT_ALLOW_SYSTEM_READ, false);
@@ -661,6 +710,7 @@ async function runAgentSessionUnlocked(
     const sessionKindChanged = cached.sessionKind !== sessionKind;
     const actionSourceChanged = cached.actionSource !== actionSource;
     const requestedIntentChanged = cached.requestedIntent !== requestedIntent;
+    const actionPayloadChanged = cached.actionPayloadKey !== actionPayloadKey;
     const languageChanged = cached.language !== language;
     const apiKeyChanged = cached.apiKey !== config.apiKey;
     const readPermissionChanged = cached.allowSystemFileRead !== allowSystemFileRead;
@@ -674,6 +724,7 @@ async function runAgentSessionUnlocked(
       sessionKindChanged ||
       actionSourceChanged ||
       requestedIntentChanged ||
+      actionPayloadChanged ||
       languageChanged ||
       apiKeyChanged ||
       readPermissionChanged ||
@@ -698,6 +749,7 @@ async function runAgentSessionUnlocked(
       : initialMessages && initialMessages.length > 0
         ? plainToAgentMessages(initialMessages)
         : [];
+    let terminalProposalTail = false;
     const agent = new Agent({
       initialState: {
         model,
@@ -709,6 +761,7 @@ async function runAgentSessionUnlocked(
           sessionKind,
           actionSource,
           requestedIntent,
+          actionPayload,
           projectRoot,
           allowSystemFileRead,
           language,
@@ -718,8 +771,17 @@ async function runAgentSessionUnlocked(
         messages: initialAgentMessages,
       },
       transformContext: createBookContextTransform(bookId, projectRoot),
-      convertToLlm: (messages) => convertAgentMessagesForModel(messages, model),
-      streamFn: guardedStreamSimple,
+      convertToLlm: (messages) => {
+        terminalProposalTail = isTerminalProposalTail(messages);
+        return convertAgentMessagesForModel(messages, model);
+      },
+      streamFn: (streamModel, context, options) => {
+        if (terminalProposalTail) {
+          terminalProposalTail = false;
+          return localAssistantStopStream(streamModel);
+        }
+        return guardedStreamSimple(streamModel, context, options);
+      },
       getApiKey: (provider: string) => {
         if (config.apiKey) return config.apiKey;
         return getEnvApiKey(provider);
@@ -734,6 +796,7 @@ async function runAgentSessionUnlocked(
       sessionKind,
       actionSource,
       requestedIntent,
+      actionPayloadKey,
       playWorldExists,
       language,
       modelIdentity: requestedModelIdentity,

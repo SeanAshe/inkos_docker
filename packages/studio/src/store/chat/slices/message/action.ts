@@ -135,11 +135,11 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     }
   },
 
-  createSession: async (bookId, sessionKind) => {
+  createSession: async (bookId, sessionKind, playMode) => {
     const data = await fetchJson<SessionResponse>("/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bookId, sessionKind }),
+      body: JSON.stringify({ bookId, sessionKind, playMode }),
     });
     const sessionId = data.session?.sessionId;
     if (!sessionId) {
@@ -380,6 +380,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           playMode,
           actionSource,
           requestedIntent: options?.requestedIntent,
+          actionPayload: options?.actionPayload,
           sessionId,
           model: get().selectedModel ?? undefined,
           service: get().selectedService ?? undefined,
@@ -444,10 +445,10 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           }));
         }
       } else {
-        const emptyMessage = "模型未返回文本内容。请检查协议类型（chat/responses）、流式开关或上游服务兼容性。";
         if (hasStream) {
-          get().replaceStreamWithError(sessionId, streamTs, emptyMessage);
+          get().finalizeStream(sessionId, streamTs, "", toolCall);
         } else {
+          const emptyMessage = "模型未返回文本内容。请检查协议类型（chat/responses）、流式开关或上游服务兼容性。";
           get().addErrorMessage(sessionId, emptyMessage);
         }
       }

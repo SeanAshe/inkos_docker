@@ -22,7 +22,6 @@ import {
   migrateBookSession,
   SessionAlreadyMigratedError,
   runAgentSession,
-  buildAgentSystemPrompt,
   resolveServicePreset,
   resolveServiceProviderFamily,
   resolveServiceModelsBaseUrl,
@@ -58,9 +57,11 @@ import {
   SessionKindSchema,
   isWriteNextInstruction,
   normalizeActionSource as normalizeCoreActionSource,
+  normalizeActionPayload as normalizeCoreActionPayload,
   normalizePlayMode as normalizeCorePlayMode,
   normalizeRequestedIntent as normalizeCoreRequestedIntent,
   inferLanguage,
+  type ActionPayload,
   type ActionSource,
   type ResolvedModel,
   type PipelineConfig,
@@ -294,6 +295,15 @@ function normalizeStudioRequestedIntent(value: unknown): RequestedIntent | undef
     return normalizeCoreRequestedIntent(value);
   } catch {
     throw new ApiError(400, "INVALID_REQUESTED_INTENT", `Invalid requestedIntent: ${String(value)}`);
+  }
+}
+
+function normalizeStudioActionPayload(value: unknown): ActionPayload | undefined {
+  try {
+    return normalizeCoreActionPayload(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ApiError(400, "INVALID_ACTION_PAYLOAD", `Invalid actionPayload: ${message}`);
   }
 }
 
@@ -662,6 +672,16 @@ function deriveBookIdFromTitle(title: string): string {
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 30);
+}
+
+async function completeBookExists(bookDir: string): Promise<boolean> {
+  try {
+    await access(join(bookDir, "book.json"));
+    await access(join(bookDir, "story", "story_bible.md"));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolveArchitectBookIdFromArgs(args?: Record<string, unknown>): string | null {
@@ -1512,12 +1532,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const bookId = bookConfig.id;
     const bookDir = state.bookDir(bookId);
 
-    try {
-      await access(join(bookDir, "book.json"));
-      await access(join(bookDir, "story", "story_bible.md"));
+    if (!bookId) {
+      return c.json({ error: "Could not derive a valid book id from title" }, 400);
+    }
+    if (await completeBookExists(bookDir)) {
       return c.json({ error: `Book "${bookId}" already exists` }, 409);
-    } catch {
-      // The target book is not fully initialized yet, so creation can continue.
     }
 
     broadcast("book:creating", { bookId, title: body.title });
@@ -2824,6 +2843,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       sessionKind: reqSessionKind,
       actionSource: reqActionSource,
       requestedIntent: reqRequestedIntent,
+      actionPayload: reqActionPayload,
       playMode: reqPlayMode,
       model: reqModel,
       service: reqService,
@@ -2834,6 +2854,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       sessionKind?: string;
       actionSource?: string;
       requestedIntent?: string;
+      actionPayload?: unknown;
       playMode?: string;
       model?: string;
       service?: string;
@@ -2852,6 +2873,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     const actionSource = normalizeStudioActionSource(reqActionSource);
     const requestedIntent = normalizeStudioRequestedIntent(reqRequestedIntent);
+    const actionPayload = normalizeStudioActionPayload(reqActionPayload);
     const playMode = normalizeStudioPlayMode(reqPlayMode);
 
     broadcast("agent:start", { instruction, activeBookId, sessionId, actionSource, requestedIntent });
@@ -3171,6 +3193,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           playMode,
           actionSource,
           requestedIntent,
+          actionPayload,
           sessionId: bookSession.sessionId,
           language: surfaceLanguage,
           onEvent: (event) => {
@@ -3312,6 +3335,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       };
 
       if (!result.responseText) {
+        if (hasSuccessfulToolExec(collectedToolExecs, "propose_action")) {
+          await refreshBookSessionFromTranscript();
+          broadcast("agent:complete", { instruction, activeBookId, sessionId: bookSession.sessionId, sessionKind });
+          return c.json({
+            response: "",
+            session: {
+              sessionId: bookSession.sessionId,
+              sessionKind,
+              ...(bookSession.bookId ? { activeBookId: bookSession.bookId } : {}),
+            },
+          });
+        }
+
         if (result.errorMessage) {
           if (resolveCreatedBookIdFromToolExecs(collectedToolExecs)) {
             await finalizeCreatedBook();
@@ -3322,95 +3358,31 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           }, 502);
         }
 
-        try {
-          const fallbackClient = createLLMClient({
-            ...config.llm,
-            service: configuredEntry?.service ?? reqService ?? config.llm.service,
-            model: reqModel ?? config.llm.model,
-            apiKey: agentApiKey ?? config.llm.apiKey,
-            baseUrl: configuredEntry?.baseUrl ?? "",
-            ...(configuredEntry?.apiFormat ? { apiFormat: configuredEntry.apiFormat } : {}),
-            ...(configuredEntry?.stream !== undefined ? { stream: configuredEntry.stream } : {}),
-          } as ProjectConfig["llm"]);
-          const fallback = await chatCompletion(
-            fallbackClient,
-            reqModel ?? config.llm.model,
-            [
-              { role: "system", content: buildAgentSystemPrompt(agentBookId, surfaceLanguage, sessionKind, { actionSource, requestedIntent }) },
-              { role: "user", content: instruction },
-            ],
-            { maxTokens: 256 },
-          );
-          if (fallback.content?.trim()) {
-            const actionExecutionError = validateAgentActionExecution({
-              instruction,
-              agentBookId,
-              requestedIntent,
-              collectedToolExecs,
-            });
-            if (actionExecutionError) {
-              return c.json({
-                error: { code: "AGENT_ACTION_NOT_EXECUTED", message: actionExecutionError },
-                response: actionExecutionError,
-              }, 502);
-            }
-            await appendManualSessionMessages(root, bookSession.sessionId, [{
-              role: "assistant",
-              content: [{ type: "text", text: fallback.content }],
-              api: "anthropic-messages",
-              provider: configuredEntry?.service ?? reqService ?? config.llm.provider,
-              model: reqModel ?? config.llm.model,
-              usage: {
-                input: 0,
-                output: 0,
-                cacheRead: 0,
-                cacheWrite: 0,
-                totalTokens: 0,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-              },
-              stopReason: "stop",
-              timestamp: Date.now(),
-            }], instruction, { sessionKind });
-            await refreshBookSessionFromTranscript();
-            const createdBookId = await finalizeCreatedBook();
-            return c.json({
-              response: fallback.content,
-              session: {
-                sessionId: bookSession.sessionId,
-                sessionKind,
-                ...(createdBookId ? { activeBookId: createdBookId } : {}),
-              },
-            });
-          }
-        } catch {
-          // fall through to probe-based diagnosis below
+        const actionExecutionError = validateAgentActionExecution({
+          instruction,
+          agentBookId,
+          requestedIntent,
+          collectedToolExecs,
+        });
+        if (actionExecutionError) {
+          return c.json({
+            error: { code: "AGENT_ACTION_NOT_EXECUTED", message: actionExecutionError },
+            response: actionExecutionError,
+          }, 502);
         }
 
-        try {
-          const probeClient = createLLMClient({
-            ...config.llm,
-            service: configuredEntry?.service ?? reqService ?? config.llm.service,
-            model: reqModel ?? config.llm.model,
-            apiKey: agentApiKey ?? config.llm.apiKey,
-            baseUrl: configuredEntry?.baseUrl ?? "",
-            ...(configuredEntry?.apiFormat ? { apiFormat: configuredEntry.apiFormat } : {}),
-            ...(configuredEntry?.stream !== undefined ? { stream: configuredEntry.stream } : {}),
-          } as ProjectConfig["llm"]);
-          await chatCompletion(
-            probeClient,
-            reqModel ?? config.llm.model,
-            [{ role: "user", content: "ping" }],
-            { maxTokens: 5 },
-          );
-        } catch (probeError) {
-          const probeMessage = probeError instanceof Error ? probeError.message : String(probeError);
-          if (resolveCreatedBookIdFromToolExecs(collectedToolExecs)) {
-            await finalizeCreatedBook();
-          }
+        await refreshBookSessionFromTranscript();
+        const createdBookId = await finalizeCreatedBook();
+        if (requestedIntent || createdBookId) {
+          broadcast("agent:complete", { instruction, activeBookId, sessionId: bookSession.sessionId, sessionKind });
           return c.json({
-            error: { code: "AGENT_EMPTY_RESPONSE", message: probeMessage },
-            response: probeMessage,
-          }, 502);
+            response: "",
+            session: {
+              sessionId: bookSession.sessionId,
+              sessionKind,
+              ...(createdBookId ?? bookSession.bookId ? { activeBookId: createdBookId ?? bookSession.bookId } : {}),
+            },
+          });
         }
 
         const emptyMessage = "模型未返回文本内容。请检查协议类型（chat/responses）、流式开关或上游服务兼容性。";
@@ -4141,31 +4113,41 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     } catch {
       return c.json({ error: `Parent book "${body.parentBookId}" not found` }, 404);
     }
-    const now = new Date().toISOString();
-    const bookId = body.title.toLowerCase().replace(/[^a-z0-9一-鿿]/g, "-").replace(/-+/g, "-").slice(0, 30);
     const language = (body.language ?? parent.language) as "zh" | "en" | undefined;
-    const bookConfig = {
-      id: bookId,
+    const now = new Date().toISOString();
+    const bookConfig = buildStudioBookConfig({
       title: body.title,
-      platform: (body.platform ?? parent.platform ?? "other") as "other",
-      genre: (body.genre ?? parent.genre ?? "other") as "xuanhuan",
-      status: "outlining" as const,
-      targetChapters: body.targetChapters ?? 100,
-      chapterWordCount: body.chapterWordCount ?? 3000,
+      genre: body.genre ?? parent.genre ?? "other",
+      platform: body.platform ?? parent.platform,
+      targetChapters: body.targetChapters ?? parent.targetChapters,
+      chapterWordCount: body.chapterWordCount ?? parent.chapterWordCount,
       ...(language ? { language } : {}),
-      createdAt: now,
-      updatedAt: now,
-    };
-    broadcast("spinoff:start", { bookId, title: body.title, parentBookId: body.parentBookId });
-    try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
-      await pipeline.initSpinoffBook(bookConfig, body.parentBookId, body.direction);
-      broadcast("spinoff:complete", { bookId });
-      return c.json({ ok: true, bookId });
-    } catch (e) {
-      broadcast("spinoff:error", { bookId, error: String(e) });
-      return c.json({ error: String(e) }, 500);
+    }, now);
+    const bookId = bookConfig.id;
+    if (!bookId) {
+      return c.json({ error: "Could not derive a valid book id from title" }, 400);
     }
+    if (await completeBookExists(state.bookDir(bookId))) {
+      return c.json({ error: `Book "${bookId}" already exists` }, 409);
+    }
+    broadcast("spinoff:start", { bookId, title: body.title, parentBookId: body.parentBookId });
+    bookCreateStatus.set(bookId, { status: "creating" });
+    void (async () => {
+      try {
+        const pipeline = new PipelineRunner(await buildPipelineConfig());
+        await pipeline.initSpinoffBook(bookConfig, body.parentBookId, body.direction);
+        const book = await loadStudioBookListSummary(state, bookId).catch(() => undefined);
+        bookCreateStatus.delete(bookId);
+        broadcast("spinoff:complete", { bookId });
+        broadcast("book:created", { bookId, ...(book ? { book } : {}) });
+      } catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        bookCreateStatus.set(bookId, { status: "error", error });
+        broadcast("spinoff:error", { bookId, error });
+        broadcast("book:error", { bookId, error });
+      }
+    })();
+    return c.json({ status: "creating", bookId });
   });
 
   // --- Imitation (仿写) init: original story imitating a reference work's style ---
@@ -4180,29 +4162,39 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       return c.json({ error: "title, referenceText and storyIdea are required" }, 400);
     }
     const now = new Date().toISOString();
-    const bookId = body.title.toLowerCase().replace(/[^a-z0-9一-鿿]/g, "-").replace(/-+/g, "-").slice(0, 30);
-    const bookConfig = {
-      id: bookId,
+    const bookConfig = buildStudioBookConfig({
       title: body.title,
-      platform: (body.platform ?? "other") as "other",
-      genre: (body.genre ?? "other") as "xuanhuan",
-      status: "outlining" as const,
-      targetChapters: body.targetChapters ?? 100,
-      chapterWordCount: body.chapterWordCount ?? 3000,
+      genre: body.genre ?? "other",
+      platform: body.platform,
+      targetChapters: body.targetChapters,
+      chapterWordCount: body.chapterWordCount,
       ...(body.language ? { language: body.language as "zh" | "en" } : {}),
-      createdAt: now,
-      updatedAt: now,
-    };
-    broadcast("imitation:start", { bookId, title: body.title });
-    try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
-      await pipeline.initImitationBook(bookConfig, body.referenceText, body.storyIdea, body.sourceName);
-      broadcast("imitation:complete", { bookId });
-      return c.json({ ok: true, bookId });
-    } catch (e) {
-      broadcast("imitation:error", { bookId, error: String(e) });
-      return c.json({ error: String(e) }, 500);
+    }, now);
+    const bookId = bookConfig.id;
+    if (!bookId) {
+      return c.json({ error: "Could not derive a valid book id from title" }, 400);
     }
+    if (await completeBookExists(state.bookDir(bookId))) {
+      return c.json({ error: `Book "${bookId}" already exists` }, 409);
+    }
+    broadcast("imitation:start", { bookId, title: body.title });
+    bookCreateStatus.set(bookId, { status: "creating" });
+    void (async () => {
+      try {
+        const pipeline = new PipelineRunner(await buildPipelineConfig());
+        await pipeline.initImitationBook(bookConfig, body.referenceText, body.storyIdea, body.sourceName);
+        const book = await loadStudioBookListSummary(state, bookId).catch(() => undefined);
+        bookCreateStatus.delete(bookId);
+        broadcast("imitation:complete", { bookId });
+        broadcast("book:created", { bookId, ...(book ? { book } : {}) });
+      } catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        bookCreateStatus.set(bookId, { status: "error", error });
+        broadcast("imitation:error", { bookId, error });
+        broadcast("book:error", { bookId, error });
+      }
+    })();
+    return c.json({ status: "creating", bookId });
   });
 
   // --- Radar Scan ---

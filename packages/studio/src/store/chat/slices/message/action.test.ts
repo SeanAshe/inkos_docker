@@ -13,12 +13,25 @@ vi.mock("../../../../hooks/use-api", () => ({ fetchJson }));
 
 class FakeEventSource {
   readonly url: string;
+  readonly listeners = new Map<string, Array<(event: MessageEvent) => void>>();
   constructor(url: string) {
     this.url = url;
+    fakeEventSources.push(this);
   }
-  addEventListener() {}
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    const current = this.listeners.get(type) ?? [];
+    current.push(listener);
+    this.listeners.set(type, current);
+  }
   close() {}
+  emit(type: string, data: unknown) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener({ data: JSON.stringify(data) } as MessageEvent);
+    }
+  }
 }
+
+const fakeEventSources: FakeEventSource[] = [];
 
 function createTestStore() {
   return createStore<ChatStore>()((...args) => ({
@@ -34,6 +47,7 @@ describe("chat message actions", () => {
   beforeEach(() => {
     fetchJson.mockReset();
     fetchJson.mockResolvedValue({});
+    fakeEventSources.length = 0;
     (globalThis as any).EventSource = FakeEventSource;
   });
 
@@ -70,5 +84,56 @@ describe("chat message actions", () => {
       isDraft: false,
     });
     expect(store.getState().sessionIdsByBook["new-book"]).toContain(sessionId);
+  });
+
+  it("keeps a tool-only stream when /agent returns an empty response after a proposal", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "book-create");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: null, sessionKind: "book-create" } })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveAgent = resolve;
+      }));
+
+    const sent = store.getState().sendMessage(sessionId, "创建一本债务悬疑长篇", { sessionKind: "book-create" });
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
+
+    fakeEventSources[0].emit("tool:start", {
+      sessionId,
+      id: "proposal-1",
+      tool: "propose_action",
+    });
+    fakeEventSources[0].emit("tool:end", {
+      sessionId,
+      id: "proposal-1",
+      tool: "propose_action",
+      details: {
+        kind: "proposed_action",
+        action: "create_book",
+        targetSessionKind: "book-create",
+        sameSession: true,
+        title: "确认建书",
+        instruction: "创建一本债务悬疑长篇",
+      },
+    });
+
+    resolveAgent({ response: "", session: { sessionId, sessionKind: "book-create" } });
+    await sent;
+
+    const messages = store.getState().sessions[sessionId]?.messages ?? [];
+    const assistant = messages.find((message) => message.role === "assistant");
+    expect(assistant?.content).not.toContain("模型未返回文本内容");
+    expect(assistant?.parts).toEqual([
+      expect.objectContaining({
+        type: "tool",
+        execution: expect.objectContaining({
+          tool: "propose_action",
+          status: "completed",
+        }),
+      }),
+    ]);
   });
 });

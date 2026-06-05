@@ -172,10 +172,17 @@ export {
 } from "./interaction/intents.js";
 export {
   ActionSourceSchema,
+  ActionPayloadSchema,
+  CreateBookActionPayloadSchema,
+  GenerateCoverActionPayloadSchema,
+  PlayStartActionPayloadSchema,
   RequestedIntentSchema,
+  ShortRunActionPayloadSchema,
   type ActionSource,
+  type ActionPayload,
   type RequestedIntent,
   normalizeActionSource,
+  normalizeActionPayload,
   normalizeRequestedIntent,
   normalizePlayMode,
   isWriteNextInstruction,

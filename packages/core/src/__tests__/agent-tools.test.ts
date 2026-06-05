@@ -163,25 +163,65 @@ describe("agent deterministic writing tools", () => {
     });
   });
 
+  it("carries structured execution payloads in proposed actions", async () => {
+    const tool = createProposeActionTool("zh");
+
+    const result = await tool.execute("proposal-book", {
+      action: "create_book",
+      instruction: "创建《夜间派送》，番茄，100章以内，每章2600字。",
+      createBook: {
+        title: "夜间派送",
+        genre: "urban",
+        platform: "tomato",
+        targetChapters: 100,
+        chapterWordCount: 2600,
+        language: "zh",
+      },
+    });
+
+    expect(result.details).toMatchObject({
+      kind: "proposed_action",
+      action: "create_book",
+      actionPayload: {
+        createBook: {
+          title: "夜间派送",
+          genre: "urban",
+          platform: "tomato",
+          targetChapters: 100,
+          chapterWordCount: 2600,
+          language: "zh",
+        },
+      },
+    });
+  });
+
   it("can propose opening existing assisted creation workflows without claiming production", async () => {
     const tool = createProposeActionTool("zh");
 
-    const result = await tool.execute("proposal-fanfic", {
-      action: "fanfic_init",
-      instruction: "打开同人工具，基于用户提供的原作设定创建衍生草案。",
-    });
+    const cases = [
+      { action: "fanfic_init", route: "import:fanfic", title: "打开同人创作" },
+      { action: "spinoff_create", route: "import:spinoff", title: "打开番外创作" },
+      { action: "style_imitation", route: "import:imitation", title: "打开仿写/文风分析" },
+    ] as const;
 
-    expect(result.content[0]?.type).toBe("text");
-    if (result.content[0]?.type === "text") {
-      expect(result.content[0].text).toContain("打开同人创作");
-      expect(result.content[0].text).toContain("不会直接生成成品");
+    for (const item of cases) {
+      const result = await tool.execute(`proposal-${item.action}`, {
+        action: item.action,
+        instruction: "打开对应 Studio 工具，等待用户补充材料。",
+      });
+
+      expect(result.content[0]?.type).toBe("text");
+      if (result.content[0]?.type === "text") {
+        expect(result.content[0].text).toContain(item.title);
+        expect(result.content[0].text).toContain("不会直接生成成品");
+      }
+      expect(result.details).toMatchObject({
+        kind: "proposed_action",
+        action: item.action,
+        targetSessionKind: "chat",
+        targetRoute: item.route,
+      });
     }
-    expect(result.details).toMatchObject({
-      kind: "proposed_action",
-      action: "fanfic_init",
-      targetSessionKind: "chat",
-      targetRoute: "import:fanfic",
-    });
   });
 
   it("passes the explicit architect title straight into initBook", async () => {
@@ -202,6 +242,45 @@ describe("agent deterministic writing tools", () => {
       }),
       expect.objectContaining({
         externalContext: "写一本港风商战小说",
+      }),
+    );
+  });
+
+  it("uses confirmed create-book payload when architect tool args drift or omit defaults", async () => {
+    const pipeline = {
+      initBook: vi.fn(async () => undefined),
+    };
+    const tool = createSubAgentTool(pipeline as never, null, undefined, {
+      actionPayload: {
+        createBook: {
+          title: "夜间派送",
+          genre: "urban",
+          platform: "tomato",
+          targetChapters: 100,
+          chapterWordCount: 2600,
+          language: "zh",
+        },
+      },
+    });
+
+    await tool.execute("tool-confirmed-book", {
+      agent: "architect",
+      title: "夜间派送",
+      platform: "other",
+      targetChapters: 200,
+      instruction: "创建《夜间派送》，番茄，100章以内。",
+    } as any);
+
+    expect(pipeline.initBook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "夜间派送",
+        genre: "urban",
+        platform: "tomato",
+        targetChapters: 100,
+        chapterWordCount: 2600,
+      }),
+      expect.objectContaining({
+        externalContext: "创建《夜间派送》，番茄，100章以内。",
       }),
     );
   });
@@ -298,6 +377,8 @@ describe("agent deterministic writing tools", () => {
     expect(tool.name).toBe("short_fiction_run");
     expect(schemaText).toContain("direction");
     expect(schemaText).toContain("coverModel");
+    expect(schemaText).toContain("charsPerChapter");
+    expect(schemaText).not.toContain("\"chars\"");
     expect(toolText).not.toContain("benchmark");
     expect(toolText).not.toContain("deconstruction");
   });

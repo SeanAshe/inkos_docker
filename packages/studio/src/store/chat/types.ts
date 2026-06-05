@@ -1,4 +1,4 @@
-import type { ActionSource, PlayMode, RequestedIntent, SessionKind } from "@actalk/inkos-core";
+import type { ActionPayload, ActionSource, PlayMode, RequestedIntent, SessionKind } from "@actalk/inkos-core";
 
 // -- Data types --
 
@@ -115,12 +115,14 @@ export interface BookSummary {
 export type ChatSessionKind = SessionKind;
 export type ChatActionSource = ActionSource;
 export type ChatRequestedIntent = RequestedIntent;
+export type ChatActionPayload = ActionPayload;
 
 export interface SendMessageOptions {
   readonly activeBookId?: string;
   readonly sessionKind?: ChatSessionKind;
   readonly actionSource?: ChatActionSource;
   readonly requestedIntent?: ChatRequestedIntent;
+  readonly actionPayload?: ChatActionPayload;
   readonly playMode?: PlayMode;
 }
 
@@ -173,7 +175,7 @@ export interface MessageActions {
   addErrorMessage: (sessionId: string, errorMsg: string) => void;
   loadSessionMessages: (sessionId: string, msgs: ReadonlyArray<SessionMessage>) => void;
   loadSessionList: (bookId: string | null) => Promise<ReadonlyArray<SessionSummary>>;
-  createSession: (bookId: string | null, sessionKind?: ChatSessionKind) => Promise<string>;
+  createSession: (bookId: string | null, sessionKind?: ChatSessionKind, playMode?: PlayMode) => Promise<string>;
   createDraftSession: (bookId: string | null, sessionKind?: ChatSessionKind, playMode?: PlayMode) => string;
   setSessionPlayMode: (sessionId: string, playMode: PlayMode) => void;
   renameSession: (sessionId: string, title: string) => Promise<void>;

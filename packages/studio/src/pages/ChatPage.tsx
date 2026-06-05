@@ -53,7 +53,7 @@ interface Nav {
   toDashboard: () => void;
   toBook: (id: string) => void;
   toServices: () => void;
-  toImport: (tab?: "chapters" | "canon" | "fanfic") => void;
+  toImport: (tab?: "chapters" | "canon" | "fanfic" | "spinoff" | "imitation") => void;
   toStyle: () => void;
 }
 
@@ -315,10 +315,15 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
   const handleProposedAction = async (details: ProposedActionDetails) => {
     // Lock the proposal card so the production action can't be re-fired.
     markProposalResolved(details.execId, "confirmed");
+    const targetPlayMode = details.targetSessionKind === "play"
+      ? details.actionPayload?.playStart?.mode ?? activeSession?.playMode ?? (details.action === "play_start" ? "open" : undefined)
+      : undefined;
     if (details.targetRoute) {
       if (details.targetRoute === "import:fanfic") nav.toImport("fanfic");
       else if (details.targetRoute === "import:chapters") nav.toImport("chapters");
       else if (details.targetRoute === "import:canon") nav.toImport("canon");
+      else if (details.targetRoute === "import:spinoff") nav.toImport("spinoff");
+      else if (details.targetRoute === "import:imitation") nav.toImport("imitation");
       else if (details.targetRoute === "style") nav.toStyle();
       return;
     }
@@ -326,16 +331,20 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
       await sendMessage(activeSessionId, details.instruction ?? "", {
         activeBookId,
         sessionKind: details.targetSessionKind,
+        playMode: targetPlayMode,
         actionSource: "button",
         requestedIntent: details.action,
+        actionPayload: details.actionPayload,
       });
       return;
     }
-    const targetSessionId = await createSession(null, details.targetSessionKind);
+    const targetSessionId = await createSession(null, details.targetSessionKind, targetPlayMode);
     await sendMessage(targetSessionId, details.instruction ?? "", {
       sessionKind: details.targetSessionKind,
+      playMode: targetPlayMode,
       actionSource: "button",
       requestedIntent: details.action,
+      actionPayload: details.actionPayload,
     });
   };
 
@@ -517,8 +526,8 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
         </div>
       )}
 
-      {/* Bottom: pick-playstyle hides input; started 点着玩 shows choices; else free-text input */}
-      {needsPlayModeChoice ? null : showChoicePanel ? (
+      {/* Bottom: pick-playstyle hides input; play choices are shortcuts, not a replacement for free actions. */}
+      {!needsPlayModeChoice && showChoicePanel && (
         <PlayChoicePanel
           choices={playChoices}
           disabled={loading || !activeSessionId}
@@ -527,7 +536,8 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
             if (activeSessionId) void sendMessage(activeSessionId, action, { activeBookId, sessionKind: "play", actionSource: "button" });
           }}
         />
-      ) : (
+      )}
+      {needsPlayModeChoice ? null : (
       <div className="shrink-0 border-t border-border/40 px-4 py-3">
         <div className="max-w-3xl mx-auto">
             <div className="rounded-xl bg-secondary/30 transition-all">

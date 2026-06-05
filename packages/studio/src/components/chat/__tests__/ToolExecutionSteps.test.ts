@@ -180,6 +180,14 @@ describe("groupChronologically", () => {
         title: "生成短篇",
         summary: "确认后生成完整短篇。",
         instruction: "写一篇婚姻反杀短篇",
+        actionPayload: {
+          shortRun: {
+            direction: "婚姻反杀",
+            chapters: 12,
+            charsPerChapter: 1000,
+            cover: true,
+          },
+        },
       },
     });
 
@@ -191,34 +199,50 @@ describe("groupChronologically", () => {
       sameSession: true,
       title: "生成短篇",
       instruction: "写一篇婚姻反杀短篇",
+      actionPayload: {
+        shortRun: {
+          direction: "婚姻反杀",
+          chapters: 12,
+          charsPerChapter: 1000,
+          cover: true,
+        },
+      },
     });
   });
 
   it("extracts proposed route actions for existing Studio workflows", () => {
-    const exec = makeExec({
-      id: "proposal-route",
-      tool: "propose_action",
-      label: "确认动作",
-      details: {
-        kind: "proposed_action",
-        action: "fanfic_init",
-        targetSessionKind: "chat",
-        targetRoute: "import:fanfic",
-        title: "打开同人创作",
-        summary: "确认后打开导入工具的同人创作入口。",
-        instruction: "打开同人工具，等待用户补充原作材料。",
-      },
-    });
+    const cases = [
+      { action: "fanfic_init", route: "import:fanfic", title: "打开同人创作" },
+      { action: "spinoff_create", route: "import:spinoff", title: "打开番外创作" },
+      { action: "style_imitation", route: "import:imitation", title: "打开仿写创作" },
+    ] as const;
 
-    expect(getProposedActionDetails(exec)).toMatchObject({
-      kind: "proposed_action",
-      execId: "proposal-route",
-      action: "fanfic_init",
-      targetSessionKind: "chat",
-      targetRoute: "import:fanfic",
-      title: "打开同人创作",
-      instruction: "打开同人工具，等待用户补充原作材料。",
-    });
+    for (const item of cases) {
+      const exec = makeExec({
+        id: `proposal-route-${item.action}`,
+        tool: "propose_action",
+        label: "确认动作",
+        details: {
+          kind: "proposed_action",
+          action: item.action,
+          targetSessionKind: "chat",
+          targetRoute: item.route,
+          title: item.title,
+          summary: "确认后打开对应工具入口。",
+          instruction: "打开对应工具，等待用户补充材料。",
+        },
+      });
+
+      expect(getProposedActionDetails(exec)).toMatchObject({
+        kind: "proposed_action",
+        execId: `proposal-route-${item.action}`,
+        action: item.action,
+        targetSessionKind: "chat",
+        targetRoute: item.route,
+        title: item.title,
+        instruction: "打开对应工具，等待用户补充材料。",
+      });
+    }
   });
 
   it("ignores invalid proposed target routes", () => {

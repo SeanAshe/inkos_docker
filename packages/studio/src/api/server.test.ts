@@ -294,6 +294,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     InputGovernanceModeSchema: actual.InputGovernanceModeSchema,
     isWriteNextInstruction: actual.isWriteNextInstruction,
     normalizeActionSource: actual.normalizeActionSource,
+    normalizeActionPayload: actual.normalizeActionPayload,
     normalizePlayMode: actual.normalizePlayMode,
     normalizeRequestedIntent: actual.normalizeRequestedIntent,
   };
@@ -2530,6 +2531,53 @@ describe("createStudioServer daemon lifecycle", () => {
     );
   });
 
+  it("forwards confirmed actionPayload into runAgentSession", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "创建《夜间派送》，番茄，100章以内。",
+        sessionId: "agent-session-1",
+        sessionKind: "book-create",
+        actionSource: "button",
+        requestedIntent: "create_book",
+        actionPayload: {
+          createBook: {
+            title: "夜间派送",
+            genre: "urban",
+            platform: "tomato",
+            targetChapters: 100,
+            chapterWordCount: 2600,
+            language: "zh",
+          },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(runAgentSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKind: "book-create",
+        actionSource: "button",
+        requestedIntent: "create_book",
+        actionPayload: {
+          createBook: {
+            title: "夜间派送",
+            genre: "urban",
+            platform: "tomato",
+            targetChapters: 100,
+            chapterWordCount: 2600,
+            language: "zh",
+          },
+        },
+      }),
+      "创建《夜间派送》，番茄，100章以内。",
+    );
+  });
+
   it("routes write-next button instructions directly to the shared writer pipeline", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
@@ -3182,32 +3230,6 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("probes the upstream when the agent returns empty text and surfaces the real error", async () => {
-    runAgentSessionMock.mockResolvedValueOnce({
-      responseText: "",
-      messages: [{ role: "user", content: "nihao" }],
-    });
-    chatCompletionMock.mockRejectedValue(new Error("quota exhausted"));
-
-    const { createStudioServer } = await import("./server.js");
-    const app = createStudioServer(cloneProjectConfig() as never, root);
-
-    const response = await app.request("http://localhost/api/v1/agent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instruction: "nihao", activeBookId: "demo-book", sessionId: "agent-session-1" }),
-    });
-
-    expect(response.status).toBe(502);
-    await expect(response.json()).resolves.toEqual({
-      error: {
-        code: "AGENT_EMPTY_RESPONSE",
-        message: "quota exhausted",
-      },
-      response: "quota exhausted",
-    });
-  });
-
   it("returns the agent final assistant error without replacing it with an empty-response probe", async () => {
     const upstreamError = "400 The `reasoning_content` in the thinking mode must be passed back to the API.";
     runAgentSessionMock.mockResolvedValueOnce({
@@ -3264,16 +3286,11 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to plain chat when the tool-agent returns empty text", async () => {
+  it("does not replace an empty agent response with a second plain-chat call", async () => {
     runAgentSessionMock.mockResolvedValueOnce({
       responseText: "",
       messages: [{ role: "user", content: "nihao" }],
     });
-    chatCompletionMock.mockResolvedValueOnce({
-      content: "你好！",
-      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-    });
-
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -3283,11 +3300,15 @@ describe("createStudioServer daemon lifecycle", () => {
       body: JSON.stringify({ instruction: "nihao", activeBookId: "demo-book", sessionId: "agent-session-1" }),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(502);
     await expect(response.json()).resolves.toMatchObject({
-      response: "你好！",
-      session: { sessionId: "agent-session-1" },
+      error: {
+        code: "AGENT_EMPTY_RESPONSE",
+        message: expect.stringContaining("模型未返回文本内容"),
+      },
+      response: expect.stringContaining("模型未返回文本内容"),
     });
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("migrates and exposes a book created by architect even when the final agent text is empty", async () => {
@@ -3340,11 +3361,6 @@ describe("createStudioServer daemon lifecycle", () => {
         messages: [{ role: "user", content: "/new New Book" }],
       };
     });
-    chatCompletionMock.mockResolvedValueOnce({
-      content: "建书完成。",
-      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-    });
-
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -3357,12 +3373,13 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(response.status).toBe(200);
     expect(migrateBookSessionMock).toHaveBeenCalledWith(root, "agent-session-1", "new-book");
     await expect(response.json()).resolves.toMatchObject({
-      response: "建书完成。",
+      response: "",
       session: {
         sessionId: "agent-session-1",
         activeBookId: "new-book",
       },
     });
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("rejects /api/v1/agent requests without sessionId", async () => {
@@ -3641,10 +3658,31 @@ describe("createStudioServer daemon lifecycle", () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: "番外·林深往事", parentBookId: "memory-clinic", direction: "学生时代" }),
     });
-    await expect(ok.json()).resolves.toMatchObject({ ok: true });
-    expect(initSpinoffBookMock).toHaveBeenCalledTimes(1);
+    await expect(ok.json()).resolves.toMatchObject({ status: "creating", bookId: "番外-林深往事" });
+    await vi.waitFor(() => expect(initSpinoffBookMock).toHaveBeenCalledTimes(1));
     expect(initSpinoffBookMock.mock.calls[0]?.[1]).toBe("memory-clinic");
     expect(initSpinoffBookMock.mock.calls[0]?.[2]).toBe("学生时代");
+  });
+
+  it("spinoff/init rejects a duplicate target book id before running the pipeline", async () => {
+    await mkdir(join(root, "books", "existing-book", "story"), { recursive: true });
+    await writeFile(join(root, "books", "existing-book", "book.json"), JSON.stringify({ id: "existing-book" }), "utf-8");
+    await writeFile(join(root, "books", "existing-book", "story", "story_bible.md"), "# existing", "utf-8");
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    loadBookConfigMock.mockResolvedValueOnce({ genre: "urban", language: "zh", platform: "tomato" });
+
+    const response = await app.request("http://localhost/api/v1/spinoff/init", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Existing Book", parentBookId: "parent-book" }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining('Book "existing-book" already exists'),
+    });
+    expect(initSpinoffBookMock).not.toHaveBeenCalled();
   });
 
   it("imitation/init requires title+reference+idea and otherwise runs initImitationBook", async () => {
@@ -3662,8 +3700,8 @@ describe("createStudioServer daemon lifecycle", () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: "仿写新书", referenceText: "参考文本片段……", storyIdea: "一个原创故事", sourceName: "范本" }),
     });
-    await expect(ok.json()).resolves.toMatchObject({ ok: true });
-    expect(initImitationBookMock).toHaveBeenCalledTimes(1);
+    await expect(ok.json()).resolves.toMatchObject({ status: "creating", bookId: "仿写新书" });
+    await vi.waitFor(() => expect(initImitationBookMock).toHaveBeenCalledTimes(1));
     expect(initImitationBookMock.mock.calls[0]?.[2]).toBe("一个原创故事");
   });
 
