@@ -23,7 +23,6 @@ export const InteractionIntentTypeSchema = z.enum([
   "explain_status",
   "explain_failure",
   "export_book",
-  "switch_mode",
 ]);
 
 export type InteractionIntentType = z.infer<typeof InteractionIntentTypeSchema>;

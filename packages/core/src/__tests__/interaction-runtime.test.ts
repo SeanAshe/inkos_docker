@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { InteractionRequestSchema } from "../interaction/intents.js";
 import { InteractionSessionSchema } from "../interaction/session.js";
 import { runInteractionRequest } from "../interaction/runtime.js";
 
@@ -464,41 +465,8 @@ describe("interaction runtime", () => {
     expect(result.responseText).toContain("marked it for review");
   });
 
-  it("updates automation mode without invoking pipeline tools", async () => {
-    const writeNextChapter = vi.fn();
-    const reviseDraft = vi.fn();
-    const updateCurrentFocus = vi.fn();
-    const updateAuthorIntent = vi.fn();
-    const writeTruthFile = vi.fn();
-
-    const result = await runInteractionRequest({
-      session: InteractionSessionSchema.parse({
-        sessionId: "session-5",
-        projectRoot: "/tmp/project",
-        activeBookId: "harbor",
-        automationMode: "semi",
-        messages: [],
-        events: [],
-      }),
-      request: { intent: "switch_mode", mode: "auto" },
-      tools: makeTools({
-        writeNextChapter,
-        reviseDraft,
-        updateCurrentFocus,
-        updateAuthorIntent,
-        writeTruthFile,
-      }),
-    });
-
-    expect(result.session.automationMode).toBe("auto");
-    expect(writeNextChapter).not.toHaveBeenCalled();
-    expect(reviseDraft).not.toHaveBeenCalled();
-    expect(updateCurrentFocus).not.toHaveBeenCalled();
-    expect(updateAuthorIntent).not.toHaveBeenCalled();
-    expect(result.session.events.map((event) => event.kind)).toEqual([
-      "task.started",
-      "task.completed",
-    ]);
+  it("does not expose switch_mode as a natural-language intent", () => {
+    expect(() => InteractionRequestSchema.parse({ intent: "switch_mode", mode: "auto" })).toThrow();
   });
 
   it("binds the selected book without invoking pipeline tools", async () => {

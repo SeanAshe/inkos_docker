@@ -974,18 +974,6 @@ export async function runInteractionRequest(params: {
         details: metadata.details,
       };
     }
-    case "switch_mode":
-      session = markCompleted(session);
-      return {
-        session: addEvent(session, "task.completed", "completed", localize(language, {
-          zh: `已切换到${localizeMode(session.automationMode, language)}模式。`,
-          en: `Switched mode to ${session.automationMode}.`,
-        })),
-        responseText: localize(language, {
-          zh: `已切换到${localizeMode(session.automationMode, language)}模式。`,
-          en: `Switched mode to ${session.automationMode}.`,
-        }),
-      };
     case "pause_book": {
       const bookId = request.bookId ?? session.activeBookId;
       const paused = {
