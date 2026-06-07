@@ -72,12 +72,20 @@ function compressionLabel(category: ContextCompressionCategory): string {
   return category === "session_context" ? "整理会话记忆" : "压缩故事上下文";
 }
 
+function compressionSourceSummary(sources: readonly string[] | undefined): string {
+  if (!sources || sources.length === 0) return "";
+  const preview = sources.slice(0, 3).join(", ");
+  const suffix = sources.length > 3 ? ` +${sources.length - 3}` : "";
+  return `来源 ${sources.length}: ${preview}${suffix}`;
+}
+
 function compressionProgress(event: ContextCompressionStreamEvent): PipelineStage["progress"] | undefined {
   if (event.phase !== "start") return undefined;
   const parts = [
     event.protectedTokens !== undefined ? `保护 ${event.protectedTokens}` : "",
     event.compressibleTokens !== undefined ? `可压缩 ${event.compressibleTokens}` : "",
     event.budgetTokens !== undefined ? `预算 ${event.budgetTokens}` : "",
+    compressionSourceSummary(event.sources),
   ].filter(Boolean);
   return {
     status: parts.length > 0 ? parts.join(" · ") : "compressing",

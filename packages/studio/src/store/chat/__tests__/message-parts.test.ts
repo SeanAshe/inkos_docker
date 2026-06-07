@@ -161,6 +161,37 @@ describe("buildPartsFromEvents", () => {
     }
   });
 
+  it("shows context compression token budget and source trace while running", () => {
+    const parts = buildPartsFromEvents([
+      { type: "tool:start", id: "t1", tool: "sub_agent", agent: "writer", stages: ["准备章节输入"] },
+      {
+        type: "context:compression",
+        category: "story_context",
+        phase: "start",
+        protectedTokens: 1200,
+        compressibleTokens: 9000,
+        budgetTokens: 6000,
+        sources: [
+          "story/chapter_summaries.md#recent_titles",
+          "story/pending_hooks.md#active",
+          "story/outline/volume_map.md#volume_2",
+          "story/roles/主要角色/林月.md",
+        ],
+      },
+    ]);
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0].type).toBe("tool");
+    if (parts[0].type === "tool") {
+      const compressionStage = parts[0].execution.stages?.find((stage) => stage.label === "压缩故事上下文");
+      expect(compressionStage?.progress?.status).toContain("保护 1200");
+      expect(compressionStage?.progress?.status).toContain("可压缩 9000");
+      expect(compressionStage?.progress?.status).toContain("预算 6000");
+      expect(compressionStage?.progress?.status).toContain("来源 4: story/chapter_summaries.md#recent_titles");
+      expect(compressionStage?.progress?.status).toContain("+1");
+    }
+  });
+
   it("handles multi-turn thinking (append, not overwrite)", () => {
     const parts = buildPartsFromEvents([
       { type: "thinking:start" },
