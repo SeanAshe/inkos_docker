@@ -24,6 +24,7 @@ export function StoryGraphTree({
   const c = useColors(theme);
   const { data: graph, loading, error, refetch } = useApi<StoryGraph>(`/projects/${projectId}/story-graph`);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   if (loading) return <div className={c.muted}>{t("common.loading")}</div>;
   if (error) return <div className="text-red-400">{t("common.error")}: {error}</div>;
@@ -31,6 +32,7 @@ export function StoryGraphTree({
 
   const saveNode = async (node: StoryNode) => {
     setSavingId(node.id);
+    setSaveError(null);
     try {
       await fetchJson(`/projects/${projectId}/story-graph/delta`, {
         method: "POST",
@@ -38,6 +40,8 @@ export function StoryGraphTree({
         body: JSON.stringify({ delta: { nodes: { upsert: [node] } } }),
       });
       await refetch();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
       setSavingId(null);
     }
@@ -59,6 +63,12 @@ export function StoryGraphTree({
           试玩 →
         </button>
       </div>
+
+      {saveError && (
+        <div className="rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-2 text-sm text-red-400" data-testid="film-save-error">
+          保存失败：{saveError}
+        </div>
+      )}
 
       {graph.worldAnchor && (
         <div className="border rounded p-3 text-sm" data-testid="film-world">
