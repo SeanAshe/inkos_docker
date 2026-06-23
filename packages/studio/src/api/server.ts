@@ -72,6 +72,11 @@ import {
   createShortFictionRunTool,
   createStoryboardCreationTool,
   createSubAgentTool,
+  createDraftStructureTool,
+  createConnectChoiceTool,
+  createRemoveNodeTool,
+  filmLLMDepsFromClient,
+  applyGraphDelta,
   type ResolvedModel,
   type PipelineConfig,
   type PlayMode,
@@ -761,7 +766,10 @@ function isConfirmedProductionAction(args: {
     || args.requestedIntent === "storyboard_create"
     || args.requestedIntent === "interactive_film_create"
     || args.requestedIntent === "play_start"
-      || args.requestedIntent === "generate_cover"
+    || args.requestedIntent === "generate_cover"
+    || args.requestedIntent === "draft_structure"
+    || args.requestedIntent === "connect_choice"
+    || args.requestedIntent === "remove_node"
     );
 }
 
@@ -796,7 +804,10 @@ async function executeConfirmedProductionAction(args: {
     | ReturnType<typeof createScriptCreationTool>
     | ReturnType<typeof createStoryboardCreationTool>
     | ReturnType<typeof createInteractiveFilmCreationTool>
-    | ReturnType<typeof createPlayStartTool>;
+    | ReturnType<typeof createPlayStartTool>
+    | ReturnType<typeof createDraftStructureTool>
+    | ReturnType<typeof createConnectChoiceTool>
+    | ReturnType<typeof createRemoveNodeTool>;
   let params: Record<string, unknown>;
   let agent: string | undefined;
 
@@ -919,6 +930,35 @@ async function executeConfirmedProductionAction(args: {
       ...(payload?.mode ? { mode: payload.mode } : {}),
       ...(initialScene ? { initialScene } : {}),
       ...(payload?.suggestedActions ? { suggestedActions: payload.suggestedActions } : {}),
+    };
+  } else if (args.requestedIntent === "draft_structure") {
+    const payload = actionPayload?.draftStructure;
+    const projectId = payload?.projectId ?? args.sessionId;
+    const agentCtx = args.pipeline.createAgentContext("film-authoring", projectId);
+    const deps = filmLLMDepsFromClient(agentCtx.client, agentCtx.model);
+    tool = createDraftStructureTool(args.root, projectId, deps);
+    params = {
+      instruction: payload?.instruction?.trim() || args.instruction,
+    };
+  } else if (args.requestedIntent === "connect_choice") {
+    const payload = actionPayload?.connectChoice;
+    if (!payload?.node) {
+      throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", "确认连接选择缺少节点数据，请重新生成确认卡。");
+    }
+    const projectId = payload?.projectId ?? args.sessionId;
+    tool = createConnectChoiceTool(args.root, projectId);
+    params = {
+      node: payload.node,
+    };
+  } else if (args.requestedIntent === "remove_node") {
+    const payload = actionPayload?.removeNode;
+    if (!payload?.nodeId) {
+      throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", "确认删除节点缺少 nodeId，请重新生成确认卡。");
+    }
+    const projectId = payload?.projectId ?? args.sessionId;
+    tool = createRemoveNodeTool(args.root, projectId);
+    params = {
+      nodeId: payload.nodeId,
     };
   } else {
     throw new ApiError(400, "UNSUPPORTED_CONFIRMED_ACTION", `Unsupported confirmed action: ${args.requestedIntent}`);
@@ -4902,6 +4942,16 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     } catch { /* slow/unreachable upstream — leave llmConnected false */ }
 
     return c.json(checks);
+  });
+
+  app.post("/api/v1/projects/:id/story-graph/delta", async (c) => {
+    const id = c.req.param("id");
+    if (!isSafeBookId(id)) {
+      return c.json({ error: { code: "INVALID_ID", message: `invalid project id: ${id}` } }, 400);
+    }
+    const { delta } = await c.req.json<{ delta: unknown }>();
+    const { graph, rev } = await applyGraphDelta({ projectRoot: root, projectId: id, delta: delta as never });
+    return c.json({ rev, graph });
   });
 
   app.get("/api/v1/projects/:id/story-graph", async (c) => {
