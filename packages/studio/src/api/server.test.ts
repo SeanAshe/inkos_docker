@@ -4132,6 +4132,80 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(after.json()).resolves.toMatchObject({ mode: "manual" });
   });
 
+  it("stores chapter review mode per book without changing the project default", async () => {
+    await writeCompleteBookFixture(root, "demo-book", "Demo Book");
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const saveBookMode = await app.request("http://localhost/api/v1/books/demo-book/chapter-review-mode", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "manual" }),
+    });
+    await expect(saveBookMode.json()).resolves.toMatchObject({
+      ok: true,
+      mode: "manual",
+      bookMode: "manual",
+      projectMode: "auto",
+    });
+
+    const bookMode = await app.request("http://localhost/api/v1/books/demo-book/chapter-review-mode");
+    await expect(bookMode.json()).resolves.toMatchObject({
+      mode: "manual",
+      bookMode: "manual",
+      projectMode: "auto",
+    });
+
+    const projectMode = await app.request("http://localhost/api/v1/project/chapter-review-mode");
+    await expect(projectMode.json()).resolves.toMatchObject({ mode: "auto" });
+    const rawBook = JSON.parse(await readFile(join(root, "books", "demo-book", "book.json"), "utf-8"));
+    expect(rawBook.writing.reviewMode).toBe("manual");
+  });
+
+  it("uses a book-level manual review override when writing the next chapter", async () => {
+    await writeCompleteBookFixture(root, "demo-book", "Demo Book");
+    const rawBookPath = join(root, "books", "demo-book", "book.json");
+    const rawBook = JSON.parse(await readFile(rawBookPath, "utf-8"));
+    await writeFile(rawBookPath, JSON.stringify({
+      ...rawBook,
+      writing: { reviewMode: "manual" },
+    }, null, 2), "utf-8");
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/write-next", { method: "POST" });
+
+    expect(response.status).toBe(200);
+    expect(pipelineConfigs.at(-1)).toMatchObject({ chapterReviewMode: "manual" });
+  });
+
+  it("exposes a global default model endpoint backed by llm.defaultModel", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const initial = await app.request("http://localhost/api/v1/project/default-model");
+    await expect(initial.json()).resolves.toMatchObject({
+      defaultModel: "gpt-5.4",
+    });
+
+    const save = await app.request("http://localhost/api/v1/project/default-model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ service: "kkaiapi", defaultModel: "deepseek-v4-flash" }),
+    });
+    await expect(save.json()).resolves.toMatchObject({
+      ok: true,
+      service: "kkaiapi",
+      defaultModel: "deepseek-v4-flash",
+    });
+
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    expect(raw.llm.service).toBe("kkaiapi");
+    expect(raw.llm.defaultModel).toBe("deepseek-v4-flash");
+    expect(raw.llm.model).toBe("deepseek-v4-flash");
+  });
+
   it("project advanced settings expose input governance and detection config", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);

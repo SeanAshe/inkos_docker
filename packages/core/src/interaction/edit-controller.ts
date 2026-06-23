@@ -354,7 +354,7 @@ async function executeChapterLocalEdit(
   }
 
   const content = await readFile(chapterPath, "utf-8");
-  const nextContent = content.split(request.targetText).join(request.replacementText);
+  const nextContent = replaceChapterTargetText(content, request.targetText, request.replacementText);
   if (nextContent === content) {
     throw new Error(`Target text was not found in chapter ${request.chapterNumber}.`);
   }
@@ -380,6 +380,27 @@ async function executeChapterLocalEdit(
     reviewRequired: true,
     summary: `Patched chapter ${request.chapterNumber} and marked it for review.`,
   };
+}
+
+function replaceChapterTargetText(content: string, targetText: string, replacementText: string): string {
+  const exact = content.split(targetText).join(replacementText);
+  if (exact !== content) return exact;
+
+  const pattern = flexibleWhitespacePattern(targetText);
+  if (!pattern) return content;
+  let matched = false;
+  const replaced = content.replace(pattern, () => {
+    matched = true;
+    return replacementText;
+  });
+  return matched ? replaced : content;
+}
+
+function flexibleWhitespacePattern(targetText: string): RegExp | null {
+  const parts = targetText.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return null;
+  const escaped = parts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(escaped.join("\\s+"), "g");
 }
 
 export async function executeEditTransaction(

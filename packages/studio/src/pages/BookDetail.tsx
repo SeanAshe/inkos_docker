@@ -111,14 +111,15 @@ export function BookDetail({
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exportApprovedOnly, setExportApprovedOnly] = useState(false);
   const [bookActionPending, setBookActionPending] = useState<string | null>(null);
-  // C4a: auto (pipeline self-reviews) vs manual (write the draft and stop; you
-  // run audit / revise / approve as checkpoint actions). Project-level setting.
+  // Auto (pipeline self-reviews) vs manual (write the draft and stop; you
+  // run audit / revise / approve as checkpoint actions). This is scoped to
+  // the current book, with project-level mode as the inherited default.
   const [reviewMode, setReviewMode] = useState<"auto" | "manual">("auto");
   useEffect(() => {
-    void fetchJson<{ mode?: string }>("/project/chapter-review-mode")
+    void fetchJson<{ mode?: string }>(`/books/${encodeURIComponent(bookId)}/chapter-review-mode`)
       .then((r) => setReviewMode(r.mode === "manual" ? "manual" : "auto"))
       .catch(() => undefined);
-  }, []);
+  }, [bookId]);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -172,7 +173,7 @@ export function BookDetail({
     const next = reviewMode === "manual" ? "auto" : "manual";
     setReviewMode(next);
     try {
-      await fetchJson("/project/chapter-review-mode", {
+      await fetchJson(`/books/${encodeURIComponent(bookId)}/chapter-review-mode`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: next }),

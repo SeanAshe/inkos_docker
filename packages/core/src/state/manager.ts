@@ -267,10 +267,55 @@ export class StateManager {
     const indexPath = join(this.bookDir(bookId), "chapters", "index.json");
     try {
       const raw = await readFile(indexPath, "utf-8");
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as ReadonlyArray<ChapterMeta>;
+      if (Array.isArray(parsed)) {
+        const rebuilt = await this.rebuildChapterIndexFromFiles(bookId);
+        return rebuilt.length > 0 ? rebuilt : parsed as ReadonlyArray<ChapterMeta>;
+      }
+    } catch {
+      const rebuilt = await this.rebuildChapterIndexFromFiles(bookId);
+      if (rebuilt.length > 0) return rebuilt;
+    }
+    return [];
+  }
+
+  private async rebuildChapterIndexFromFiles(bookId: string): Promise<ReadonlyArray<ChapterMeta>> {
+    const chaptersDir = join(this.bookDir(bookId), "chapters");
+    let files: string[];
+    try {
+      files = await readdir(chaptersDir);
     } catch {
       return [];
     }
+
+    const rows = await Promise.all(files.flatMap(async (file) => {
+      const match = file.match(/^(\d+)[_-]?(.*?)\.md$/);
+      if (!match) return [];
+      const number = parseInt(match[1]!, 10);
+      if (!Number.isFinite(number) || number <= 0) return [];
+      const filePath = join(chaptersDir, file);
+      const [metadata, content] = await Promise.all([
+        stat(filePath).catch(() => null),
+        readFile(filePath, "utf-8").catch(() => ""),
+      ]);
+      const timestamp = (metadata?.mtime ?? new Date()).toISOString();
+      const rawTitle = match[2]?.replace(/^_+/, "").replace(/_/g, " ").trim();
+      return [{
+        number,
+        title: rawTitle || `第${number}章`,
+        status: "ready-for-review" as const,
+        wordCount: content.replace(/\s+/g, "").length,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        auditIssues: [],
+        lengthWarnings: [],
+      }];
+    }));
+
+    return rows
+      .flat()
+      .sort((a, b) => a.number - b.number);
   }
 
   async saveChapterIndex(

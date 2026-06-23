@@ -283,6 +283,45 @@ describe("edit controller", () => {
     expect(result.reviewRequired).toBe(true);
   });
 
+  it("patches chapter text when the target only differs by whitespace", async () => {
+    const bookDir = join(projectRoot, "books", "harbor");
+    await writeFile(
+      join(bookDir, "chapters", "0004_雨巷.md"),
+      "# 第4章 雨巷\n\n她把账本\n塞进外套里，继续往前走。",
+      "utf-8",
+    );
+    const chapterIndex = [{
+      number: 4,
+      title: "雨巷",
+      status: "ready-for-review" as const,
+      wordCount: 18,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      auditIssues: [],
+      lengthWarnings: [],
+    }];
+
+    const result = await executeEditTransaction(
+      {
+        bookDir: (bookId) => join(projectRoot, "books", bookId),
+        loadChapterIndex: async () => chapterIndex,
+        saveChapterIndex: async () => undefined,
+      },
+      {
+        kind: "chapter-local-edit",
+        bookId: "harbor",
+        chapterNumber: 4,
+        instruction: "Patch wrapped text",
+        targetText: "她把账本 塞进外套里",
+        replacementText: "她把账本贴着胸口藏好",
+      },
+    );
+
+    await expect(readFile(join(bookDir, "chapters", "0004_雨巷.md"), "utf-8"))
+      .resolves.toContain("她把账本贴着胸口藏好，继续往前走。");
+    expect(result.reviewRequired).toBe(true);
+  });
+
   it("executes whole-chapter replacement and marks the chapter for review", async () => {
     const bookDir = join(projectRoot, "books", "replacebook");
     await mkdir(join(bookDir, "chapters"), { recursive: true });

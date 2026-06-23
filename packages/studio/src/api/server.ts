@@ -130,13 +130,13 @@ function resolveToolLabel(tool: string, agent?: string): string {
 }
 
 function summarizeResult(result: unknown): string {
-  if (typeof result === "string") return result.slice(0, 200);
+  if (typeof result === "string") return result.slice(0, 2000);
   if (result && typeof result === "object") {
     const r = result as Record<string, unknown>;
-    if (typeof r.content === "string") return r.content.slice(0, 200);
-    if (typeof r.text === "string") return r.text.slice(0, 200);
+    if (typeof r.content === "string") return r.content.slice(0, 2000);
+    if (typeof r.text === "string") return r.text.slice(0, 2000);
   }
-  return String(result).slice(0, 200);
+  return String(result).slice(0, 2000);
 }
 
 function compareServiceListItems(
@@ -1228,6 +1228,42 @@ async function saveRawConfig(root: string, config: Record<string, unknown>): Pro
   await writeFile(join(root, "inkos.json"), JSON.stringify(config, null, 2), "utf-8");
 }
 
+type ChapterReviewMode = "auto" | "manual";
+
+function normalizeChapterReviewMode(mode: unknown): ChapterReviewMode {
+  return mode === "manual" ? "manual" : "auto";
+}
+
+function readProjectChapterReviewMode(config: Record<string, unknown>): ChapterReviewMode {
+  const writing = config.writing && typeof config.writing === "object" && !Array.isArray(config.writing)
+    ? config.writing as Record<string, unknown>
+    : {};
+  return normalizeChapterReviewMode(writing.reviewMode);
+}
+
+function readBookChapterReviewMode(rawBook: Record<string, unknown>): ChapterReviewMode | undefined {
+  const writing = rawBook.writing && typeof rawBook.writing === "object" && !Array.isArray(rawBook.writing)
+    ? rawBook.writing as Record<string, unknown>
+    : undefined;
+  if (!writing || writing.reviewMode !== "manual" && writing.reviewMode !== "auto") return undefined;
+  return writing.reviewMode;
+}
+
+async function loadRawBookConfig(root: string, bookId: string): Promise<Record<string, unknown>> {
+  const raw = await readFile(join(root, "books", bookId, "book.json"), "utf-8");
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+async function resolveBookChapterReviewMode(root: string, bookId: string | undefined, projectMode: ChapterReviewMode): Promise<ChapterReviewMode> {
+  if (!bookId || !isSafeBookId(bookId)) return projectMode;
+  try {
+    const rawBook = await loadRawBookConfig(root, bookId);
+    return readBookChapterReviewMode(rawBook) ?? projectMode;
+  } catch {
+    return projectMode;
+  }
+}
+
 function unquoteEnvValue(value: string): string {
   const trimmed = value.trim();
   if ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
@@ -1829,9 +1865,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model">> & {
       readonly currentConfig?: ProjectConfig;
       readonly sessionIdForSSE?: string;
+      readonly bookIdForSettings?: string;
     },
   ): Promise<PipelineConfig> {
     const currentConfig = overrides?.currentConfig ?? await loadCurrentProjectConfig();
+    const projectReviewMode = readProjectChapterReviewMode(currentConfig as unknown as Record<string, unknown>);
+    const chapterReviewMode = await resolveBookChapterReviewMode(root, overrides?.bookIdForSettings, projectReviewMode);
     const scopedSseSink: LogSink = overrides?.sessionIdForSSE
       ? {
           write(entry) {
@@ -1852,7 +1891,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       defaultLLMConfig: currentConfig.llm,
       foundationReviewRetries: currentConfig.foundation?.reviewRetries ?? 2,
       writingReviewRetries: currentConfig.writing?.reviewRetries ?? 1,
-      chapterReviewMode: (currentConfig.writing as { readonly reviewMode?: string } | undefined)?.reviewMode === "manual" ? "manual" : "auto",
+      chapterReviewMode,
       modelOverrides: currentConfig.modelOverrides,
       notifyChannels: currentConfig.notify,
       logger,
@@ -2197,7 +2236,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     broadcast("write:start", { bookId: id });
 
     // Fire and forget — progress/completion/errors pushed via SSE
-    const pipeline = new PipelineRunner(await buildPipelineConfig());
+    const pipeline = new PipelineRunner(await buildPipelineConfig({ bookIdForSettings: id }));
     pipeline.writeNextChapter(id, body.wordCount).then(
       (result) => {
         broadcast("write:complete", { bookId: id, chapterNumber: result.chapterNumber, status: result.status, title: result.title, wordCount: result.wordCount });
@@ -3575,6 +3614,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         model: reqModel ?? config.llm.model,
         currentConfig: config,
         sessionIdForSSE: bookSession.sessionId,
+        bookIdForSettings: activeBookId ?? undefined,
       }));
 
       if (requestedIntent && isConfirmedProductionAction({ actionSource, requestedIntent })) {
@@ -4262,22 +4302,113 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ ok: true });
   });
 
+  // --- Global default model ---
+
+  app.get("/api/v1/project/default-model", async (c) => {
+    const raw = await loadRawConfig(root);
+    const llm = raw.llm && typeof raw.llm === "object" && !Array.isArray(raw.llm)
+      ? raw.llm as Record<string, unknown>
+      : {};
+    return c.json({
+      service: typeof llm.service === "string" ? llm.service : null,
+      defaultModel: typeof llm.defaultModel === "string" && llm.defaultModel.trim()
+        ? llm.defaultModel
+        : typeof llm.model === "string" && llm.model.trim()
+          ? llm.model
+          : null,
+    });
+  });
+
+  app.put("/api/v1/project/default-model", async (c) => {
+    const body = await c.req.json<{ defaultModel?: string; service?: string }>();
+    const defaultModel = typeof body.defaultModel === "string" ? body.defaultModel.trim() : "";
+    if (!defaultModel) return c.json({ error: "defaultModel is required" }, 400);
+    const raw = await loadRawConfig(root);
+    raw.llm = raw.llm && typeof raw.llm === "object" && !Array.isArray(raw.llm) ? raw.llm : {};
+    const llm = raw.llm as Record<string, unknown>;
+    llm.defaultModel = defaultModel;
+    if (typeof body.service === "string" && body.service.trim()) {
+      llm.service = body.service.trim();
+    }
+    syncTopLevelLlmMirror(llm);
+    await saveRawConfig(root, raw);
+    return c.json({
+      ok: true,
+      service: typeof llm.service === "string" ? llm.service : null,
+      defaultModel,
+    });
+  });
+
   // --- Chapter review mode (C4a: auto pipeline vs manual checkpoint) ---
 
   app.get("/api/v1/project/chapter-review-mode", async (c) => {
-    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
-    return c.json({ mode: raw.writing?.reviewMode === "manual" ? "manual" : "auto" });
+    const raw = await loadRawConfig(root);
+    return c.json({ mode: readProjectChapterReviewMode(raw) });
   });
 
   app.put("/api/v1/project/chapter-review-mode", async (c) => {
     const { mode } = await c.req.json<{ mode?: string }>();
-    const next = mode === "manual" ? "manual" : "auto";
-    const configPath = join(root, "inkos.json");
-    const raw = JSON.parse(await readFile(configPath, "utf-8"));
+    const next = normalizeChapterReviewMode(mode);
+    const raw = await loadRawConfig(root);
     raw.writing = { ...(raw.writing ?? {}), reviewMode: next };
-    const { writeFile: writeFileFs } = await import("node:fs/promises");
-    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    await saveRawConfig(root, raw);
     return c.json({ ok: true, mode: next });
+  });
+
+  app.get("/api/v1/books/:id/chapter-review-mode", async (c) => {
+    const bookId = c.req.param("id");
+    if (!isSafeBookId(bookId)) return c.json({ error: "Invalid book id" }, 400);
+    try {
+      const [projectConfig, rawBook] = await Promise.all([
+        loadRawConfig(root),
+        loadRawBookConfig(root, bookId),
+      ]);
+      const projectMode = readProjectChapterReviewMode(projectConfig);
+      const bookMode = readBookChapterReviewMode(rawBook);
+      return c.json({
+        mode: bookMode ?? projectMode,
+        bookMode: bookMode ?? null,
+        projectMode,
+      });
+    } catch {
+      return c.json({ error: `Book "${bookId}" not found` }, 404);
+    }
+  });
+
+  app.put("/api/v1/books/:id/chapter-review-mode", async (c) => {
+    const bookId = c.req.param("id");
+    if (!isSafeBookId(bookId)) return c.json({ error: "Invalid book id" }, 400);
+    const { mode } = await c.req.json<{ mode?: string }>();
+    const rawBookPath = join(root, "books", bookId, "book.json");
+    try {
+      const [projectConfig, rawBook] = await Promise.all([
+        loadRawConfig(root),
+        loadRawBookConfig(root, bookId),
+      ]);
+      const projectMode = readProjectChapterReviewMode(projectConfig);
+      if (mode === "inherit") {
+        const writing = rawBook.writing && typeof rawBook.writing === "object" && !Array.isArray(rawBook.writing)
+          ? { ...(rawBook.writing as Record<string, unknown>) }
+          : {};
+        delete writing.reviewMode;
+        rawBook.writing = Object.keys(writing).length > 0 ? writing : undefined;
+      } else {
+        rawBook.writing = {
+          ...(rawBook.writing && typeof rawBook.writing === "object" && !Array.isArray(rawBook.writing) ? rawBook.writing as Record<string, unknown> : {}),
+          reviewMode: normalizeChapterReviewMode(mode),
+        };
+      }
+      await writeFile(rawBookPath, JSON.stringify(rawBook, null, 2), "utf-8");
+      const bookMode = readBookChapterReviewMode(rawBook);
+      return c.json({
+        ok: true,
+        mode: bookMode ?? projectMode,
+        bookMode: bookMode ?? null,
+        projectMode,
+      });
+    } catch {
+      return c.json({ error: `Book "${bookId}" not found` }, 404);
+    }
   });
 
   // --- Notify channels ---

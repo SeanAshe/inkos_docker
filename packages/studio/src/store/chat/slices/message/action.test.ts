@@ -86,6 +86,26 @@ describe("chat message actions", () => {
     expect(store.getState().sessionIdsByBook["new-book"]).toContain(sessionId);
   });
 
+  it("sends the session-bound book id when no explicit activeBookId option is provided", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession("harbor-book", "book");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: "harbor-book", sessionKind: "book" } })
+      .mockResolvedValueOnce({
+        response: "ok",
+        session: { sessionId, activeBookId: "harbor-book", sessionKind: "book" },
+      });
+
+    await store.getState().sendMessage(sessionId, "审第 1 章");
+
+    const agentCall = fetchJson.mock.calls.find(([path]) => path === "/agent");
+    expect(agentCall).toBeDefined();
+    const body = JSON.parse((agentCall?.[1] as { body: string }).body);
+    expect(body.activeBookId).toBe("harbor-book");
+    expect(body.sessionKind).toBe("book");
+  });
+
   it("keeps a tool-only stream when /agent returns an empty response after a proposal", async () => {
     const store = createTestStore();
     const sessionId = store.getState().createDraftSession(null, "book-create");

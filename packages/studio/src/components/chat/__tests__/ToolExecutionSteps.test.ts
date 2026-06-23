@@ -139,6 +139,21 @@ describe("groupChronologically", () => {
     expect(groups[1].type === "pipeline" ? groups[1].exec.tool : "").toBe("context_compression");
   });
 
+  it("renders generic pipeline result text in an expandable details block", () => {
+    const exec = makeExec({
+      id: "writer-1",
+      tool: "sub_agent",
+      agent: "writer",
+      label: "写下一章",
+      result: "已完成第 1 章：雨棚。这里是更详细的操作结果。",
+    });
+
+    const html = renderToStaticMarkup(React.createElement(ToolExecutionSteps, { executions: [exec] }));
+
+    expect(html).toContain("查看操作结果");
+    expect(html).toContain("已完成第 1 章：雨棚");
+  });
+
   it("extracts generated cover details from public short fiction tools", () => {
     const exec = makeExec({
       id: "short-1",

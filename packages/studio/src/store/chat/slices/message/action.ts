@@ -321,7 +321,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     const trimmed = text.trim();
     const session = get().sessions[sessionId];
     if (!trimmed || !session || session.isStreaming) return;
-    const activeBookId = options?.activeBookId;
+    const activeBookId = options?.activeBookId ?? session.bookId ?? undefined;
     const sessionKind: ChatSessionKind = options?.sessionKind
       ?? session.sessionKind
       ?? (activeBookId ? "book" : "chat");

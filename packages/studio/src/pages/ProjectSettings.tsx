@@ -63,10 +63,13 @@ const fieldClass = "w-full rounded-lg border border-border bg-secondary/30 px-3 
 export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const { data: overridesData, refetch: refetchOverrides } = useApi<{ overrides: Record<string, unknown> }>("/project/model-overrides");
+  const { data: defaultModelData, refetch: refetchDefaultModel } = useApi<{ service: string | null; defaultModel: string | null }>("/project/default-model");
   const { data: notifyData, refetch: refetchNotify } = useApi<{ channels: unknown[] }>("/project/notify");
   const { data: modeData, refetch: refetchMode } = useApi<{ mode: "legacy" | "v2" }>("/project/input-governance-mode");
   const { data: detectionData, refetch: refetchDetection } = useApi<{ detection: unknown | null }>("/project/detection");
   const [mode, setMode] = useState<"legacy" | "v2">("v2");
+  const [defaultService, setDefaultService] = useState("");
+  const [defaultModel, setDefaultModel] = useState("");
   const [overrideRows, setOverrideRows] = useState<OverrideRow[]>([]);
   const [notifyChannels, setNotifyChannels] = useState<NotifyChannelDraft[]>([]);
   const [det, setDet] = useState<DetectionDraft>({ ...DEFAULT_DETECTION });
@@ -85,6 +88,12 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
       return { agent, model: model ?? "", rest };
     }));
   }, [overridesData]);
+
+  useEffect(() => {
+    if (!defaultModelData) return;
+    setDefaultService(defaultModelData.service ?? "");
+    setDefaultModel(defaultModelData.defaultModel ?? "");
+  }, [defaultModelData]);
 
   useEffect(() => {
     if (!notifyData) return;
@@ -168,6 +177,39 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
 
       {/* Model routing — per-agent model overrides */}
       <SettingsCard title={t("settings.modelOverrides")} description={t("settings.modelOverridesHint")} icon={<Bot size={18} />}>
+        <div className="rounded-xl border border-border/60 bg-secondary/20 p-3 space-y-2">
+          <div>
+            <div className="text-sm font-semibold">{t("settings.globalDefaultModel")}</div>
+            <p className="mt-1 text-xs text-muted-foreground">{t("settings.globalDefaultModelHint")}</p>
+          </div>
+          <div className="grid gap-2 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto]">
+            <input
+              value={defaultService}
+              onChange={(e) => setDefaultService(e.target.value)}
+              placeholder={t("settings.serviceId")}
+              className={`${fieldClass} font-mono`}
+            />
+            <input
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
+              placeholder={t("settings.modelId")}
+              className={`${fieldClass} font-mono`}
+            />
+            <button
+              onClick={() => runSave("default-model", async () => {
+                await putApi("/project/default-model", {
+                  service: defaultService.trim() || undefined,
+                  defaultModel: defaultModel.trim(),
+                });
+                await refetchDefaultModel();
+              }, t("settings.saved"))}
+              disabled={saving === "default-model" || !defaultModel.trim()}
+              className={`rounded-lg px-4 py-2 text-sm font-bold ${c.btnPrimary} disabled:opacity-40`}
+            >
+              {saving === "default-model" ? t("config.saving") : t("config.save")}
+            </button>
+          </div>
+        </div>
         <div className="space-y-2">
           {overrideRows.length === 0 && (
             <p className="text-xs text-muted-foreground italic">{t("settings.noOverrides")}</p>

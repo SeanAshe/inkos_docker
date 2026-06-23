@@ -95,6 +95,22 @@ describe("StateManager", () => {
       expect(loaded).toEqual([]);
     });
 
+    it("rebuilds the chapter index from chapter files when index.json is empty", async () => {
+      const bookDir = manager.bookDir("rebuild-book");
+      await mkdir(join(bookDir, "chapters"), { recursive: true });
+      await writeFile(join(bookDir, "chapters", "index.json"), "[]", "utf-8");
+      await writeFile(join(bookDir, "chapters", "0001_雨棚.md"), "# 第1章 雨棚\n\n正文。", "utf-8");
+      await writeFile(join(bookDir, "chapters", "0002_账页.md"), "# 第2章 账页\n\n正文。", "utf-8");
+
+      const loaded = await manager.loadChapterIndex("rebuild-book");
+
+      expect(loaded.map((chapter) => chapter.number)).toEqual([1, 2]);
+      expect(loaded[0]).toMatchObject({
+        title: "雨棚",
+        status: "ready-for-review",
+      });
+    });
+
     it("creates the chapters directory on save", async () => {
       await manager.saveChapterIndex("book-b", []);
       const dirStat = await stat(

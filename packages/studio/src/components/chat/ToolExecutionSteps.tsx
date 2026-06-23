@@ -658,6 +658,16 @@ function PipelineExecution({
       <ScriptStoryboardResultPreview exec={exec} />
       <PlayResultPreview exec={exec} />
       <PlayEditPreview exec={exec} />
+      {typeof exec.result === "string" && exec.result.trim() && (
+        <details open className="mx-3 mb-3 mt-1 rounded-lg border border-border/40 bg-background/60 px-2.5 py-2 text-xs">
+          <summary className="cursor-pointer select-none font-medium text-muted-foreground hover:text-foreground">
+            查看操作结果
+          </summary>
+          <div className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words leading-5 text-foreground">
+            {exec.result}
+          </div>
+        </details>
+      )}
       <CollapsibleContent>
         <div className="px-3 pb-3 pt-1">
           {exec.stages && exec.stages.length > 0 && (
