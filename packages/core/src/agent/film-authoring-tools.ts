@@ -308,3 +308,51 @@ export function createRemoveNodeTool(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Tool set selection + factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the tool names that the interactive-film-authoring session should
+ * provide given the current `confirmedIntent`.
+ *
+ * - No confirmed intent → direct-write tools + propose_action (let the agent
+ *   surface high-cost operations for explicit user confirmation).
+ * - Confirmed intent → exactly that one tool (already confirmed, execute it).
+ */
+export function buildFilmAuthoringToolNames(confirmedIntent: string | undefined): string[] {
+  if (confirmedIntent === "draft_structure") return ["draft_structure"];
+  if (confirmedIntent === "connect_choice") return ["connect_choice"];
+  if (confirmedIntent === "remove_node") return ["remove_node"];
+  return ["set_world_anchor", "upsert_characters", "add_variable", "define_ending", "fill_node", "revise_node", "propose_action"];
+}
+
+/**
+ * Instantiates the AgentTool objects for an interactive-film-authoring
+ * session.  Keeps tool construction out of agent-session.ts so it can be
+ * unit-tested independently.
+ */
+export function createFilmAuthoringTools(params: {
+  readonly projectRoot: string;
+  readonly projectId: string;
+  readonly llm: FilmLLMDeps;
+  readonly proposeActionTool: AgentTool<any>;
+  readonly confirmedIntent?: string;
+}): AgentTool<any>[] {
+  const { projectRoot, projectId, llm } = params;
+  const names = buildFilmAuthoringToolNames(params.confirmedIntent);
+  const byName: Record<string, () => AgentTool<any>> = {
+    set_world_anchor: () => createSetWorldAnchorTool(projectRoot, projectId),
+    upsert_characters: () => createUpsertCharactersTool(projectRoot, projectId),
+    add_variable: () => createAddVariableTool(projectRoot, projectId),
+    define_ending: () => createDefineEndingTool(projectRoot, projectId),
+    fill_node: () => createFillNodeTool(projectRoot, projectId, llm),
+    revise_node: () => createReviseNodeTool(projectRoot, projectId, llm),
+    draft_structure: () => createDraftStructureTool(projectRoot, projectId, llm),
+    connect_choice: () => createConnectChoiceTool(projectRoot, projectId),
+    remove_node: () => createRemoveNodeTool(projectRoot, projectId),
+    propose_action: () => params.proposeActionTool,
+  };
+  return names.map((n) => byName[n]());
+}

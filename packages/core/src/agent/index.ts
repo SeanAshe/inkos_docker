@@ -20,3 +20,18 @@ export {
 } from "./agent-tools.js";
 export { runAgentSession, evictAgentCache, type AgentSessionConfig, type AgentSessionResult } from "./agent-session.js";
 export { createBookContextTransform } from "./context-transform.js";
+export {
+  createSetWorldAnchorTool,
+  createUpsertCharactersTool,
+  createAddVariableTool,
+  createDefineEndingTool,
+  createFillNodeTool,
+  createReviseNodeTool,
+  createDraftStructureTool,
+  createConnectChoiceTool,
+  createRemoveNodeTool,
+  filmLLMDepsFromClient,
+  buildFilmAuthoringToolNames,
+  createFilmAuthoringTools,
+  type FilmLLMDeps,
+} from "./film-authoring-tools.js";

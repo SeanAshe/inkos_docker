@@ -36,6 +36,7 @@ import {
   createStoryboardCreationTool,
   createInteractiveFilmCreationTool,
 } from "./agent-tools.js";
+import { createFilmAuthoringTools, filmLLMDepsFromClient } from "./film-authoring-tools.js";
 import { createBookContextTransform } from "./context-transform.js";
 import {
   appendTranscriptEvents,
@@ -685,6 +686,19 @@ function createAgentToolsForMode(params: {
       return [createInteractiveFilmCreationTool(params.pipeline, params.projectRoot, { actionPayload: params.actionPayload })];
     }
     return [proposalTool];
+  }
+
+  if (params.sessionKind === "interactive-film-authoring") {
+    const projectId = params.bookId ?? "";
+    const agentCtx = params.pipeline.createAgentContext("film-authoring", projectId || undefined);
+    const llm = filmLLMDepsFromClient(agentCtx.client, agentCtx.model);
+    return createFilmAuthoringTools({
+      projectRoot: params.projectRoot,
+      projectId,
+      llm,
+      proposeActionTool: proposalTool,
+      confirmedIntent: params.requestedIntent,
+    });
   }
 
   if (params.sessionKind === "play") {
