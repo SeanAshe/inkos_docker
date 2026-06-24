@@ -29,18 +29,26 @@ describe("reviewStoryGraph", () => {
     expect(issue?.message).toContain("trust");
   });
 
-  it("VARIABLE_UNREAD: a written/defined var nothing reads (info)", () => {
+  it("VARIABLE_UNUSED: a declared var nothing writes or reads (info)", () => {
+    // "phantom" is declared in variables[] but no effect writes it and no condition reads it
+    // "gold" is a HUD meter: written by an effect, never read by a condition → must NOT trigger VARIABLE_UNUSED
     const graph = g({
-      variables: [{ name: "gold", type: "counter", default: 0, desc: "" }],
+      variables: [
+        { name: "phantom", type: "counter", default: 0, desc: "" },
+        { name: "gold", type: "counter", default: 0, desc: "" },
+      ],
       nodes: [
         { id: "s", type: "start", imageSlot: { prompt: "p", assetRef: "x" }, choices: [{ id: "c", text: "go", targetNodeId: "e", effects: [{ var: "gold", op: "add", value: 1 }] }] },
         { id: "e", type: "ending", choices: [] },
       ],
       endings: [{ id: "g1", nodeId: "e", title: "end", type: "good" }],
     });
-    const issue = reviewStoryGraph(graph).issues.find((i) => i.code === "VARIABLE_UNREAD");
+    const report = reviewStoryGraph(graph);
+    const issue = report.issues.find((i) => i.code === "VARIABLE_UNUSED");
     expect(issue?.level).toBe("info");
-    expect(issue?.message).toContain("gold");
+    expect(issue?.message).toContain("phantom");
+    // HUD display pattern: written by effect but never branched on → must NOT be flagged
+    expect(report.issues.find((i) => i.code === "VARIABLE_UNUSED" && i.message.includes("gold"))).toBeUndefined();
   });
 
   it("ENDING_VARIETY: >=2 endings all same type (info)", () => {

@@ -1,7 +1,7 @@
 import type { StoryGraph, StoryNode } from "./graph-schema.js";
 
 export interface ValidationIssue {
-  readonly code: "DEAD_END" | "BROKEN_LINK" | "UNREACHABLE" | "NO_PATH_TO_ENDING" | "VARIABLE_UNWRITTEN" | "VARIABLE_UNREAD" | "ENDING_VARIETY" | "IMAGE_MISSING";
+  readonly code: "DEAD_END" | "BROKEN_LINK" | "UNREACHABLE" | "NO_PATH_TO_ENDING" | "VARIABLE_UNWRITTEN" | "VARIABLE_UNUSED" | "ENDING_VARIETY" | "IMAGE_MISSING";
   readonly level: "error" | "warning" | "info";
   readonly message: string;
   readonly nodeIds: readonly string[];
@@ -108,8 +108,6 @@ export function reviewStoryGraph(graph: StoryGraph): ValidationReport {
       for (const effect of choice.effects) writes.add(effect.var);
     }
   }
-  const definedOrWritten = new Set<string>([...graph.variables.map((v) => v.name), ...writes]);
-
   for (const v of reads) {
     if (!writes.has(v)) {
       issues.push({
@@ -120,12 +118,12 @@ export function reviewStoryGraph(graph: StoryGraph): ValidationReport {
       });
     }
   }
-  for (const v of definedOrWritten) {
-    if (!reads.has(v)) {
+  for (const v of graph.variables.map((vv) => vv.name)) {
+    if (!reads.has(v) && !writes.has(v)) {
       issues.push({
-        code: "VARIABLE_UNREAD",
+        code: "VARIABLE_UNUSED",
         level: "info",
-        message: `变量「${v}」定义或写入了，但没有任何条件读取它——对分支没有影响`,
+        message: `变量「${v}」声明了但没有任何选项写入、也没有任何条件读取它——这是个多余的声明`,
         nodeIds: [],
       });
     }
