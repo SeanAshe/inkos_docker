@@ -88,7 +88,7 @@ export default function FlowView({
           className={c.link}
           data-testid="flow-back"
         >
-          ← {t("bread.film") ?? "剧情树"}
+          ← {t("bread.film")}
         </button>
         <span data-testid="flow-title">{graph.title || projectId}</span>
       </div>
@@ -98,7 +98,10 @@ export default function FlowView({
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
-          colorMode="system"
+          colorMode={theme === "dark" ? "dark" : "light"}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
         >
           <Background />
           <Controls />
