@@ -13,11 +13,13 @@ export function StoryPlayer({
   nav,
   theme,
   t,
+  embedded = false,
 }: {
   projectId: string;
   nav: Nav;
   theme: Theme;
   t: TFunction;
+  embedded?: boolean;
 }) {
   const c = useColors(theme);
   const { data: graph, loading, error } = useApi<StoryGraph>(`/projects/${projectId}/story-graph`);
@@ -46,7 +48,7 @@ export function StoryPlayer({
   if (!started || !currentId) {
     return (
       <div className="space-y-6" data-testid="player-start-screen">
-        <button onClick={nav.toDashboard} className={c.link} data-testid="player-back">← {t("bread.books")}</button>
+        {!embedded && <button onClick={nav.toDashboard} className={c.link} data-testid="player-back">← {t("bread.books")}</button>}
         <h1 className="text-2xl font-semibold">{graph.title}</h1>
         <button
           onClick={reset}
@@ -74,7 +76,7 @@ export function StoryPlayer({
 
   return (
     <div className="space-y-6 relative" data-testid="player-screen">
-      <button onClick={nav.toDashboard} className={c.link} data-testid="player-back">← {t("bread.books")}</button>
+      {!embedded && <button onClick={nav.toDashboard} className={c.link} data-testid="player-back">← {t("bread.books")}</button>}
       <h2 className="text-xl font-medium" data-testid="player-node-title">{node.title}</h2>
 
       {node.imageSlot?.assetRef && (

@@ -100,11 +100,13 @@ export default function FlowView({
   nav,
   theme,
   t,
+  embedded = false,
 }: {
   projectId: string;
   nav: Nav;
   theme: Theme;
   t: TFunction;
+  embedded?: boolean;
 }) {
   const c = useColors(theme);
   const { data: graph, loading, error, refetch } = useApi<StoryGraph>(
@@ -262,13 +264,15 @@ export default function FlowView({
   return (
     <div className="flex flex-col h-full p-5 gap-3" data-testid="flow-view">
       <div className="flex items-center gap-3 text-sm shrink-0">
-        <button
-          onClick={() => nav.toFilm(projectId)}
-          className={c.link}
-          data-testid="flow-back"
-        >
-          ← {t("bread.film")}
-        </button>
+        {!embedded && (
+          <button
+            onClick={() => nav.toFilm(projectId)}
+            className={c.link}
+            data-testid="flow-back"
+          >
+            ← {t("bread.film")}
+          </button>
+        )}
         <span data-testid="flow-title">{graph.title || projectId}</span>
         <button
           data-testid="flow-edit-toggle"

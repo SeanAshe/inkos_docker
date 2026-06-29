@@ -22,11 +22,13 @@ export function StoryGraphTree({
   nav,
   theme,
   t,
+  embedded = false,
 }: {
   projectId: string;
   nav: Nav;
   theme: Theme;
   t: TFunction;
+  embedded?: boolean;
 }) {
   const c = useColors(theme);
   const { data: graph, loading, error, refetch } = useApi<StoryGraph>(`/projects/${projectId}/story-graph`);
@@ -71,44 +73,46 @@ export function StoryGraphTree({
 
   return (
     <div className="space-y-6" data-testid="film-tree">
-      <div className="flex items-center gap-3 text-sm">
-        <button onClick={nav.toDashboard} className={c.link} data-testid="film-back">
-          ← {t("bread.books")}
-        </button>
-        <span className={c.muted}>/</span>
-        <span data-testid="film-title">{graph.title || projectId}</span>
-        <button
-          onClick={() => nav.toPlay(projectId)}
-          className={`ml-auto px-3 py-1 rounded ${c.btnPrimary}`}
-          data-testid="film-play"
-        >
-          试玩 →
-        </button>
-        <button
-          onClick={() => nav.toFlow(projectId)}
-          className={`px-3 py-1 rounded ${c.btnSecondary}`}
-          data-testid="open-flow"
-        >
-          流程图 →
-        </button>
-        <button
-          onClick={() => nav.toFilmAuthor(projectId)}
-          className={`px-3 py-1 rounded ${c.btnSecondary}`}
-          data-testid="open-authoring"
-        >
-          AI 对话创作 →
-        </button>
-        {exportUrl && (
-          <a
-            href={exportUrl}
-            download
-            className={`px-3 py-1 rounded ${c.btnSecondary}`}
-            data-testid="film-export-package"
+      {!embedded && (
+        <div className="flex items-center gap-3 text-sm">
+          <button onClick={nav.toDashboard} className={c.link} data-testid="film-back">
+            ← {t("bread.books")}
+          </button>
+          <span className={c.muted}>/</span>
+          <span data-testid="film-title">{graph.title || projectId}</span>
+          <button
+            onClick={() => nav.toPlay(projectId)}
+            className={`ml-auto px-3 py-1 rounded ${c.btnPrimary}`}
+            data-testid="film-play"
           >
-            导出整包
-          </a>
-        )}
-      </div>
+            试玩 →
+          </button>
+          <button
+            onClick={() => nav.toFlow(projectId)}
+            className={`px-3 py-1 rounded ${c.btnSecondary}`}
+            data-testid="open-flow"
+          >
+            流程图 →
+          </button>
+          <button
+            onClick={() => nav.toFilmAuthor(projectId)}
+            className={`px-3 py-1 rounded ${c.btnSecondary}`}
+            data-testid="open-authoring"
+          >
+            AI 对话创作 →
+          </button>
+          {exportUrl && (
+            <a
+              href={exportUrl}
+              download
+              className={`px-3 py-1 rounded ${c.btnSecondary}`}
+              data-testid="film-export-package"
+            >
+              导出整包
+            </a>
+          )}
+        </div>
+      )}
 
       <AnalysisPanel projectId={projectId} theme={theme} />
 

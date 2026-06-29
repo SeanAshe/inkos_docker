@@ -243,7 +243,16 @@ export default function FilmWizard({
 
       {/* ── Phase stepper top bar ── */}
       <div className="flex items-center justify-between border-b border-border px-4 py-2 shrink-0 gap-3">
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            data-testid="wizard-exit"
+            onClick={nav.toDashboard}
+            className={c.link}
+          >
+            ← 互动影游
+          </button>
+          <div className="flex items-center gap-1 flex-wrap">
           {WIZARD_PHASES.map((p, i) => {
             const isActive = phase === p && !showPreview;
             const status = progress[p];
@@ -277,6 +286,7 @@ export default function FilmWizard({
               </button>
             );
           })}
+          </div>
         </div>
 
         <button
@@ -368,7 +378,7 @@ function MainArea({
   if (showPreview) {
     return (
       <div className={contentWrap}>
-        <StoryPlayer projectId={projectId} nav={nav} theme={theme} t={t} />
+        <StoryPlayer projectId={projectId} nav={nav} theme={theme} t={t} embedded />
       </div>
     );
   }
@@ -397,7 +407,7 @@ function MainArea({
   }
 
   if (phase === "structure" && subView === "flow") {
-    return <FlowView projectId={projectId} nav={nav} theme={theme} t={t} />;
+    return <FlowView projectId={projectId} nav={nav} theme={theme} t={t} embedded />;
   }
 
   if (
@@ -406,7 +416,7 @@ function MainArea({
   ) {
     return (
       <div className={contentWrap}>
-        <StoryGraphTree projectId={projectId} nav={nav} theme={theme} t={t} />
+        <StoryGraphTree projectId={projectId} nav={nav} theme={theme} t={t} embedded />
       </div>
     );
   }
