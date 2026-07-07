@@ -4865,7 +4865,7 @@ describe("PipelineRunner", () => {
       );
       expect(result.applied).toBe(false);
       expect(result.status).toBe("unchanged");
-      expect(result.skippedReason).toContain("did not improve");
+      expect(result.skippedReason).toContain("Manual revision kept original chapter");
       expect(savedChapter).toContain(originalBody);
       expect(savedChapter).not.toContain("修订后收束更利落");
       expect(savedIndex[0]?.status).toBe("audit-failed");
