@@ -18,6 +18,12 @@ vi.mock("@actalk/inkos-core", () => ({
       return loadBookConfigMock();
     }
   },
+  // Mirrors the real core implementation; unit-tested in
+  // packages/core/src/__tests__/revision-gate.test.ts.
+  resolveRevisionGate: (
+    book: { writing?: { revisionGate?: "strict" | "lenient" | "always" } },
+    projectWriting?: { revisionGate?: "strict" | "lenient" | "always" },
+  ) => book.writing?.revisionGate ?? projectWriting?.revisionGate ?? "strict",
 }));
 
 vi.mock("../utils.js", () => ({
@@ -65,6 +71,7 @@ describe("revision-related CLI commands", () => {
 
     expect(buildPipelineConfigMock).toHaveBeenCalledWith(expect.anything(), "/project", {
       externalContext: "把注意力拉回师债主线。",
+      revisionGate: "strict",
     });
     expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "rewrite");
   });

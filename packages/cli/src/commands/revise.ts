@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { DEFAULT_REVISE_MODE, PipelineRunner, type ReviseMode } from "@actalk/inkos-core";
+import { DEFAULT_REVISE_MODE, PipelineRunner, StateManager, resolveRevisionGate, type ReviseMode } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 
 export const reviseCommand = new Command("revise")
@@ -24,8 +24,11 @@ export const reviseCommand = new Command("revise")
         chapterNumber = chapterStr ? parseInt(chapterStr, 10) : undefined;
       }
 
+      const state = new StateManager(root);
+      const book = await state.loadBookConfig(bookId);
       const pipeline = new PipelineRunner(buildPipelineConfig(config, root, {
         externalContext: opts.brief,
+        revisionGate: resolveRevisionGate(book, config.writing),
       }));
 
       const mode = opts.mode as ReviseMode;

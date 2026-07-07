@@ -28,6 +28,7 @@ configCommand
         "inputGovernanceMode",
         "foundation.reviewRetries",
         "writing.reviewRetries",
+        "writing.revisionGate",
         "daemon.schedule.radarCron", "daemon.schedule.writeCron",
         "daemon.maxConcurrentBooks", "daemon.chaptersPerCycle",
         "daemon.retryDelayMs", "daemon.cooldownAfterChapterMs",
