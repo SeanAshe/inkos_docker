@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Improvements
+
+- Chat 新增 `import_chapters` 工具：可把本地文件/目录（含对话上传的附件）里的已有小说导入为书籍真实章节，自动逆向生成设定并重放章节状态；与 `ingest_material`（只存参考资料）分工明确（#324）
+- OpenRouter 等动态模型清单服务（openrouter/newapi/kkaiapi/ppio/siliconcloud）不再用静态白名单拦截用户配置的模型；openrouter 连通性探测模型更换为长期存在的 `openrouter/auto`，修复回退到已下架模型导致的 404（#300）
+- MiniMax 接入默认请求 `reasoning_split`，思考内容不再以 `<think>` 标签混进章节/对话正文（M2.x 的 thinking 无法在服务端关闭）；响应起始处的完整 think 块统一剥离兜底（#329）
+- 修订判断标准可配置：`writing.revisionGate` 三档 strict（默认，现状）/ lenient（不变差即应用）/ always（手动修订一律应用），支持全局与书级覆盖（#326）
+- CLI 现在遵守书级 `writing.reviewMode`（此前 `inkos write next` 永远自动审查）；新增 `inkos auto [book-id] <目标章号>` 连续自动写作到指定章（#307）
+- 通知渠道支持 `format: text`（默认仍为 markdown）；`write next / write rewrite / auto / revise / audit` 新增 `--notify`，动作完成或失败后发送通知（#308）
+- Studio 新增"操作详情默认展开"浏览器偏好（项目设置 → 对话界面）；read/grep 等小工具行有结果时也可展开查看正文（#306）
+
 ## v1.6.3
 
 ### Hotfix
