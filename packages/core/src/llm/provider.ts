@@ -15,6 +15,7 @@ import { lookupModel } from "./providers/lookup.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 import { isLlmStubEnabled, stubChatCompletion } from "../agent/llm-stub.js";
+import { createLeadingThinkTagStripper, stripLeadingThinkBlock } from "./think-tag-stripper.js";
 
 
 // === Streaming Monitor Types ===
@@ -654,13 +655,16 @@ function buildCustomHeaders(client: LLMClient): Record<string, string> {
 }
 
 function defaultOpenAIChatExtra(client: LLMClient, model: string): Record<string, unknown> {
-  if (
-    client.service === "minimax"
-    && /^minimax-m3(?:$|[-_.])/i.test(model)
-  ) {
-    return { thinking: { type: "disabled" } };
-  }
-  return {};
+  if (client.service !== "minimax") return {};
+  // MiniMax OpenAI 兼容端点（issue #329）：
+  // - reasoning_split: true 让 thinking 拆分到 reasoning_content / reasoning_details，
+  //   不再以 <think>...</think> 内联在 content 里。M2.x 系列的 thinking 无法关闭，
+  //   不拆分的话思考内容会混进章节/对话正文。
+  // - M3 系列额外默认关闭 thinking（M2.x 不支持 thinking 参数，不能发送）。
+  return {
+    reasoning_split: true,
+    ...(/^minimax-m3(?:$|[-_.])/i.test(model) ? { thinking: { type: "disabled" } } : {}),
+  };
 }
 
 function sanitizeHeaderApiKey(apiKey: string | undefined): string {
@@ -805,7 +809,11 @@ function extractChatDeltaContent(json: any): string {
 }
 
 function extractChatDeltaReasoningContent(json: any): string {
-  return extractOpenAITextPart(json?.choices?.[0]?.delta?.reasoning_content);
+  const delta = json?.choices?.[0]?.delta;
+  // MiniMax reasoning_split 模式下流式 thinking 走 delta.reasoning_details
+  //（[{ text: "..." }] 数组）；其它服务走 delta.reasoning_content。
+  return extractOpenAITextPart(delta?.reasoning_content)
+    || extractOpenAITextPart(delta?.reasoning_details);
 }
 
 function extractResponsesContent(json: any): string {
@@ -1084,7 +1092,9 @@ async function chatCompletionViaCustomOpenAICompatible(
 
   if (!client.stream) {
     const json = await response.json() as any;
-    const content = extractChatContent(json);
+    // MiniMax M2.x 等模型可能把思考内容以 <think>...</think> 内联在 content 开头，
+    // 剥掉起始处的完整 think 块，防止思考内容混进章节/对话正文（issue #329）。
+    const content = stripLeadingThinkBlock(extractChatContent(json));
     if (!content) {
       throw wrapLLMError(new Error("LLM returned empty response"), errorCtx);
     }
@@ -1109,6 +1119,9 @@ async function chatCompletionViaCustomOpenAICompatible(
   // 网关掐断长连接时流会"干净地"关闭但没有任何终止信号——那是截断，不是完成。
   let sawTerminal = false;
   const monitor = createStreamMonitor(onStreamProgress);
+  // 内联 <think>...</think> 的模型（如 MiniMax M2.x）：剥掉响应起始处的完整
+  // think 块，思考内容既不并入正文也不通过 onTextDelta 发给 UI（issue #329）。
+  const thinkStripper = createLeadingThinkTagStripper();
 
   try {
     while (true) {
@@ -1129,9 +1142,12 @@ async function chatCompletionViaCustomOpenAICompatible(
         }
         const delta = extractChatDeltaContent(json);
         if (delta) {
-          content += delta;
           monitor.onChunk(delta);
-          onTextDelta?.(delta);
+          const emittable = thinkStripper.push(delta);
+          if (emittable) {
+            content += emittable;
+            onTextDelta?.(emittable);
+          }
         } else {
           const reasoningDelta = extractChatDeltaReasoningContent(json);
           if (reasoningDelta) {
@@ -1152,6 +1168,8 @@ async function chatCompletionViaCustomOpenAICompatible(
     monitor.stop();
   }
 
+  // 流结束仍缓冲在剥离器里的文本（未闭合的 think 块等）原样并回，避免数据丢失。
+  content += thinkStripper.flush();
   const finalContent = content || reasoningContent;
   if (!finalContent) {
     throw wrapLLMError(new Error("LLM returned empty response from stream"), errorCtx);
