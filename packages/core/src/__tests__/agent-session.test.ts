@@ -365,6 +365,35 @@ describe("runAgentSession cache — bookId switch", () => {
     expect(agentInstances).toHaveLength(1);
   });
 
+  it("injects backgroundTaskContext into the system prompt and rebuilds when it changes", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+    const taskBlock = "## 后台任务状态\n短篇生产正在后台运行，已运行 2 分 10 秒。";
+
+    await runAgentSession(
+      { sessionId: "s1", bookId: null, language: "zh", pipeline, projectRoot, model },
+      "hi",
+    );
+    expect(agentInstances).toHaveLength(1);
+    expect(String(streamCalls.at(-1)?.context.systemPrompt)).not.toContain("后台任务状态");
+
+    // 任务开始运行：注入状态块，缓存的 Agent 必须重建（否则系统提示词是旧的）
+    await runAgentSession(
+      { sessionId: "s1", bookId: null, language: "zh", pipeline, projectRoot, model, backgroundTaskContext: taskBlock },
+      "任务在跑吗？",
+    );
+    expect(agentInstances).toHaveLength(2);
+    expect(String(streamCalls.at(-1)?.context.systemPrompt)).toContain("短篇生产正在后台运行");
+
+    // 任务结束：状态块移除，Agent 再次重建，系统提示词不再包含任务状态
+    await runAgentSession(
+      { sessionId: "s1", bookId: null, language: "zh", pipeline, projectRoot, model },
+      "现在呢？",
+    );
+    expect(agentInstances).toHaveLength(3);
+    expect(String(streamCalls.at(-1)?.context.systemPrompt)).not.toContain("后台任务状态");
+  });
+
   it("keeps cached Agents isolated by projectRoot for the same sessionId", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;

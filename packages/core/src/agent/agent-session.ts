@@ -104,6 +104,13 @@ export interface AgentSessionConfig {
   onContextCompression?: ContextCompressionCallback;
   /** Attachments uploaded with this user turn. Text is injected as protected user context; images use pi-ai ImageContent. */
   attachments?: ReadonlyArray<AgentSessionAttachment>;
+  /**
+   * Status block for a production task running in the background of this session
+   * (e.g. a confirmed short-fiction run). Appended to the system prompt so the
+   * agent can answer progress questions instead of claiming nothing is running.
+   * Changing this value evicts the cached Agent so the prompt stays current.
+   */
+  backgroundTaskContext?: string;
 }
 
 export interface AgentSessionResult {
@@ -147,6 +154,7 @@ interface CachedAgent {
   modelIdentity: string;
   apiKey: string | undefined;
   allowSystemFileRead: boolean;
+  backgroundTaskContext: string | undefined;
   lastCommittedSeq: number;
   lastActive: number;
 }
@@ -953,6 +961,7 @@ async function runAgentSessionUnlocked(
     const apiKeyChanged = cached.apiKey !== config.apiKey;
     const readPermissionChanged = cached.allowSystemFileRead !== allowSystemFileRead;
     const playWorldChanged = cached.playWorldExists !== playWorldExists;
+    const backgroundTaskContextChanged = cached.backgroundTaskContext !== config.backgroundTaskContext;
     const transcriptChanged = cached.lastCommittedSeq !== currentCommittedSeq;
 
     if (
@@ -968,6 +977,7 @@ async function runAgentSessionUnlocked(
       apiKeyChanged ||
       readPermissionChanged ||
       playWorldChanged ||
+      backgroundTaskContextChanged ||
       transcriptChanged
     ) {
       agentCache.delete(cacheKey);
@@ -1002,15 +1012,18 @@ async function runAgentSessionUnlocked(
         ? plainToAgentMessages(initialMessages)
         : [];
     let terminalToolResultTail = false;
+    const baseSystemPrompt = buildAgentSystemPrompt(bookId, language, sessionKind, {
+      actionSource,
+      requestedIntent,
+      playWorldExists,
+      skills: skillResolution,
+    });
     const agent = new Agent({
       initialState: {
         model,
-        systemPrompt: buildAgentSystemPrompt(bookId, language, sessionKind, {
-          actionSource,
-          requestedIntent,
-          playWorldExists,
-          skills: skillResolution,
-        }),
+        systemPrompt: config.backgroundTaskContext
+          ? `${baseSystemPrompt}\n\n${config.backgroundTaskContext}`
+          : baseSystemPrompt,
         tools: createAgentToolsForMode({
           pipeline,
           bookId,
@@ -1061,6 +1074,7 @@ async function runAgentSessionUnlocked(
       modelIdentity: requestedModelIdentity,
       apiKey: config.apiKey,
       allowSystemFileRead,
+      backgroundTaskContext: config.backgroundTaskContext,
       lastCommittedSeq: currentCommittedSeq ?? await latestCommittedSeq(projectRoot, sessionId),
       lastActive: Date.now(),
     };

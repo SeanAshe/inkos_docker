@@ -3109,6 +3109,199 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
+  it("rejects a second confirmed production task with 409 while one is still running", async () => {
+    let resolveInitBook!: () => void;
+    initBookMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveInitBook = resolve;
+    }));
+    loadBookSessionMock.mockResolvedValue({
+      sessionId: "busy-task-session",
+      bookId: null,
+      sessionKind: "book-create",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const pendingTask = app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "创建《第一本书》。",
+        sessionId: "busy-task-session",
+        sessionKind: "book-create",
+        actionSource: "button",
+        requestedIntent: "create_book",
+        actionPayload: { createBook: { title: "第一本书", language: "zh" } },
+      }),
+    });
+    await vi.waitFor(async () => {
+      const task = await loadStudioTaskSnapshot(root, "busy-task-session");
+      expect(task?.execution.status).toBe("running");
+    });
+
+    const second = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "创建《第二本书》。",
+        sessionId: "busy-task-session",
+        sessionKind: "book-create",
+        actionSource: "button",
+        requestedIntent: "create_book",
+        actionPayload: { createBook: { title: "第二本书", language: "zh" } },
+      }),
+    });
+
+    expect(second.status).toBe(409);
+    await expect(second.json()).resolves.toMatchObject({
+      error: {
+        code: "PRODUCTION_TASK_ALREADY_RUNNING",
+        message: expect.stringContaining("生产任务"),
+      },
+    });
+    // 第二个任务没有真正启动
+    expect(initBookMock).toHaveBeenCalledTimes(1);
+
+    resolveInitBook();
+    await pendingTask;
+    // 第一个任务不受影响，正常完成
+    await expect(loadStudioTaskSnapshot(root, "busy-task-session")).resolves.toMatchObject({
+      execution: { status: "completed" },
+    });
+  });
+
+  it("tells the chat agent about the running production task without touching the user instruction", async () => {
+    let resolveInitBook!: () => void;
+    initBookMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveInitBook = resolve;
+    }));
+    loadBookSessionMock.mockResolvedValue({
+      sessionId: "parallel-chat-session",
+      bookId: null,
+      sessionKind: "book-create",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    runAgentSessionMock.mockResolvedValueOnce({ responseText: "任务还在后台跑。", messages: [] });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const pendingTask = app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "创建《并行验证》。",
+        sessionId: "parallel-chat-session",
+        sessionKind: "book-create",
+        actionSource: "button",
+        requestedIntent: "create_book",
+        actionPayload: { createBook: { title: "并行验证", language: "zh" } },
+      }),
+    });
+    await vi.waitFor(async () => {
+      const task = await loadStudioTaskSnapshot(root, "parallel-chat-session");
+      expect(task?.execution.status).toBe("running");
+    });
+
+    const chatResponse = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "现在在写吗？",
+        sessionId: "parallel-chat-session",
+        sessionKind: "book-create",
+      }),
+    });
+
+    expect(chatResponse.status).toBe(200);
+    const agentCall = runAgentSessionMock.mock.calls.at(-1);
+    const config = agentCall?.[0] as { backgroundTaskContext?: string };
+    // 任务状态块注入到了 agent 上下文（含任务名和运行状态），用户指令原样传递
+    expect(config.backgroundTaskContext).toContain("建书");
+    expect(config.backgroundTaskContext).toContain("运行中");
+    expect(agentCall?.[1]).toBe("现在在写吗？");
+
+    resolveInitBook();
+    await pendingTask;
+  });
+
+  it("aborts only the chat round when scope=chat and leaves the production task controller alive", async () => {
+    let resolveRun!: () => void;
+    let capturedSignal: AbortSignal | undefined;
+    createShortFictionRunToolMock.mockImplementationOnce(() => ({
+      name: "short_fiction_run",
+      execute: vi.fn(async (_id: string, _params: unknown, signal: AbortSignal) => {
+        capturedSignal = signal;
+        await new Promise<void>((resolve) => {
+          resolveRun = resolve;
+        });
+        return {
+          content: [{ type: "text", text: "Short fiction completed." }],
+          details: { kind: "short_fiction_created", storyId: "scoped-short" },
+        };
+      }),
+    }));
+    loadBookSessionMock.mockResolvedValue({
+      sessionId: "chat-scope-session",
+      bookId: null,
+      sessionKind: "short",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    abortAgentSessionMock.mockReturnValue(true);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const pendingTask = app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "写一篇冷库账本短篇。",
+        sessionId: "chat-scope-session",
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "short_run",
+        actionPayload: { shortRun: { direction: "冷库账本悬疑", cover: false } },
+      }),
+    });
+    await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+
+    const chatAbort = await app.request("http://localhost/api/v1/sessions/chat-scope-session/abort", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "chat" }),
+    });
+
+    expect(chatAbort.status).toBe(200);
+    expect(abortAgentSessionMock).toHaveBeenCalledWith(root, "chat-scope-session");
+    // scope=chat 不触发任务控制器的 abort
+    expect(capturedSignal?.aborted).toBe(false);
+
+    // 默认（不带 scope）保持旧行为：任务控制器一起中止
+    const fullAbort = await app.request("http://localhost/api/v1/sessions/chat-scope-session/abort", {
+      method: "POST",
+    });
+    expect(fullAbort.status).toBe(200);
+    expect(capturedSignal?.aborted).toBe(true);
+
+    resolveRun();
+    await pendingTask;
+  });
+
   it("executes confirmed play-start action directly without asking the chat model to call tools", async () => {
     const playSession = {
       sessionId: "play-session-1",

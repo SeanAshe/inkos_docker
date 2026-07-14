@@ -219,6 +219,49 @@ function resolveToolLabel(tool: string, agent?: string, lang: StudioLanguage = "
   return label ? pick(lang, label.zh, label.en) : tool;
 }
 
+function formatTaskElapsed(ms: number, lang: StudioLanguage): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return pick(lang, `${seconds} 秒`, `${seconds}s`);
+  return pick(lang, `${minutes} 分 ${seconds} 秒`, `${minutes}m ${seconds}s`);
+}
+
+/**
+ * 把正在后台运行的生产任务状态渲染成一段系统提示词附录，注入聊天 agent 的上下文。
+ * 没有这段信息时，用户在任务运行期间问"在写吗"，agent 会答"没有任务在运行"。
+ */
+function buildRunningTaskContextBlock(task: StudioTaskSnapshot, lang: StudioLanguage): string {
+  const exec = task.execution;
+  const elapsed = formatTaskElapsed(Date.now() - exec.startedAt, lang);
+  const status = exec.status === "processing"
+    ? pick(lang, "处理中", "processing")
+    : pick(lang, "运行中", "running");
+  const logsTail = (exec.logs ?? []).slice(-3);
+  const logsBlock = logsTail.length > 0
+    ? `\n${pick(lang, "- 最近日志：", "- Recent logs:")}\n${logsTail.map((line) => `  - ${line}`).join("\n")}`
+    : "";
+  return pick(
+    lang,
+    [
+      "## 后台任务状态",
+      "本会话有一个正在后台运行的生产任务：",
+      `- 任务：${exec.label}（${exec.tool}）`,
+      `- 状态：${status}`,
+      `- 已运行：${elapsed}${logsBlock}`,
+      "该任务在后台独立运行，本轮对话不会打断它。用户询问任务进展时，基于以上信息如实回答。不要再次发起同类生产任务，也不要声称没有任务在运行。",
+    ].join("\n"),
+    [
+      "## Background task status",
+      "A production task is currently running in the background of this session:",
+      `- Task: ${exec.label} (${exec.tool})`,
+      `- Status: ${status}`,
+      `- Elapsed: ${elapsed}${logsBlock}`,
+      "The task runs independently in the background; this chat turn does not interrupt it. When the user asks about its progress, answer truthfully from the information above. Do not start another production task of the same kind, and do not claim that no task is running.",
+    ].join("\n"),
+  );
+}
+
 function summarizeResult(result: unknown): string {
   if (typeof result === "string") return result.slice(0, 2000);
   if (result && typeof result === "object") {
@@ -2528,6 +2571,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     return reconciled;
   };
 
+  // 判断"该会话是否真有生产任务在跑"的唯一入口：
+  // 对账后的快照是 running/processing，且本进程还持有对应的 AbortController。
+  const findActiveRunningTask = async (sessionId: string): Promise<StudioTaskSnapshot | null> => {
+    const task = await loadReconciledTaskSnapshot(sessionId);
+    if (!task) return null;
+    const running = task.execution.status === "running" || task.execution.status === "processing";
+    return running && activeConfirmedTasks.has(task.execution.id) ? task : null;
+  };
+
   app.use("/*", cors());
 
   // Structured error handler — ApiError returns typed JSON, others return 500
@@ -4214,10 +4266,18 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.post("/api/v1/sessions/:sessionId/abort", async (c) => {
     const sessionId = c.req.param("sessionId");
-    const task = await loadReconciledTaskSnapshot(sessionId);
-    const controller = task ? activeConfirmedTasks.get(task.execution.id) : undefined;
-    controller?.abort();
-    const aborted = abortAgentSession(root, sessionId) || Boolean(controller);
+    // scope=chat 只中止当前聊天轮（agent loop），不动后台生产任务的控制器；
+    // 默认 all 维持旧行为：聊天轮和生产任务一起停。
+    const body = await c.req.json<{ scope?: unknown }>().catch(() => ({} as { scope?: unknown }));
+    const scope = body.scope === "chat" ? "chat" : "all";
+    let taskAborted = false;
+    if (scope === "all") {
+      const task = await loadReconciledTaskSnapshot(sessionId);
+      const controller = task ? activeConfirmedTasks.get(task.execution.id) : undefined;
+      controller?.abort();
+      taskAborted = Boolean(controller);
+    }
+    const aborted = abortAgentSession(root, sessionId) || taskAborted;
     broadcast("agent:aborted", { sessionId, aborted });
     return c.json({ ok: true, aborted });
   });
@@ -4494,6 +4554,21 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       }));
 
       if (requestedIntent && isConfirmedProductionAction({ actionSource, requestedIntent })) {
+        // task-store 每会话只有一个任务快照，不支持并发生产任务：
+        // 已有任务在跑时明确拒绝，而不是覆盖旧快照导致前端丢失运行中的任务卡。
+        const runningTask = await findActiveRunningTask(bookSession.sessionId);
+        if (runningTask) {
+          const message = pick(
+            surfaceLanguage,
+            "当前会话已有一个生产任务在运行，请等它完成，或先用停止按钮结束它，再发起新任务。",
+            "A production task is already running in this session. Wait for it to finish, or stop it first, then start a new task.",
+          );
+          return c.json({
+            error: { code: "PRODUCTION_TASK_ALREADY_RUNNING", message },
+            response: message,
+          }, 409);
+        }
+
         const pendingBookId = requestedIntent === "create_book" && actionPayload?.createBook?.title
           ? deriveBookIdFromTitle(actionPayload.createBook.title)
           : null;
@@ -4729,12 +4804,18 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       // Without this, an English request on a zh-default project gets Chinese replies — and
       // a Chinese play world, because play_start then infers from the rewritten premise.
       // Run pi-agent session
+      // 后台生产任务与聊天并行时，把任务状态注入 agent 的系统提示词，
+      // 让模型知道任务仍在运行、能回答进度、且不会重复发起同类任务。
+      const backgroundTask = await findActiveRunningTask(bookSession.sessionId);
       const collectedToolExecs: CollectedToolExec[] = [];
       const result = await runAgentSession(
         {
           model,
           apiKey: agentApiKey,
           pipeline,
+          ...(backgroundTask
+            ? { backgroundTaskContext: buildRunningTaskContextBlock(backgroundTask, surfaceLanguage) }
+            : {}),
           projectRoot: root,
           bookId: agentBookId,
           sessionKind,
