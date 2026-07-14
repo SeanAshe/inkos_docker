@@ -179,11 +179,17 @@ const ProposeActionParams = Type.Object({
     storyId: Type.Optional(Type.String({
       description: "Optional confirmed output id under shorts/.",
     })),
+    language: Type.Optional(Type.Union([
+      Type.Literal("zh"),
+      Type.Literal("en"),
+    ], { description: "Confirmed short-fiction language." })),
     chapters: Type.Optional(Type.Number({
       description: "Confirmed complete short chapter count, 12-18.",
     })),
     charsPerChapter: Type.Optional(Type.Number({
-      description: "Confirmed Chinese characters per chapter, 900-1200. Do not put total story length here.",
+      minimum: 600,
+      maximum: 1200,
+      description: "Confirmed per-chapter length: 900-1200 Chinese characters for zh, or 600-800 English words for en. Do not put total story length here.",
     })),
     cover: Type.Optional(Type.Boolean({
       description: "Whether to attempt cover generation.",
@@ -387,7 +393,10 @@ function compactPlayStartPayload(value: ProposeActionParamsType["playStart"]): N
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function proposedActionPayload(params: ProposeActionParamsType): ActionPayload | undefined {
+function proposedActionPayload(
+  params: ProposeActionParamsType,
+  language: "zh" | "en",
+): ActionPayload | undefined {
   const payload: ActionPayload = {};
   if (params.action === "create_book") {
     const createBook = compactObject(params.createBook);
@@ -395,7 +404,7 @@ function proposedActionPayload(params: ProposeActionParamsType): ActionPayload |
   }
   if (params.action === "short_run") {
     const shortRun = compactObject(params.shortRun);
-    if (shortRun) payload.shortRun = shortRun;
+    if (shortRun) payload.shortRun = { language, ...shortRun };
   }
   if (params.action === "play_start") {
     const playStart = compactPlayStartPayload(params.playStart);
@@ -490,7 +499,7 @@ export function createProposeActionTool(
       const isZh = language === "zh";
       const title = params.title?.trim() || proposedActionFallbackTitle(params.action, isZh);
       const summary = params.summary?.trim() || proposedActionFallbackSummary(params.action, isZh);
-      const proposedPayload = validateProposedActionPayload(proposedActionPayload(params));
+      const proposedPayload = validateProposedActionPayload(proposedActionPayload(params, language));
       if (proposedPayload.error) {
         throw new Error(`Invalid proposed action payload: ${proposedPayload.error}`);
       }
@@ -1335,7 +1344,7 @@ export function createShortFictionRunTool(
           storyId: shortPayload?.storyId ?? params.storyId,
           chapterCount: shortPayload?.chapters ?? params.chapters,
           charsPerChapter: shortPayload?.charsPerChapter ?? params.charsPerChapter,
-          language: options.language,
+          language: shortPayload?.language ?? options.language,
           cover: shortPayload?.cover ?? params.cover,
           coverBaseUrl: params.coverBaseUrl,
           coverEndpoint: params.coverEndpoint,

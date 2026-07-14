@@ -24,6 +24,17 @@ describe("short command", () => {
     expect(optionNames).toContain("--no-cover");
   });
 
+  it("exposes writing language without forcing a Chinese length default", () => {
+    const program = createProgram();
+    const short = program.commands.find((command) => command.name() === "short");
+    const run = short?.commands.find((command) => command.name() === "run");
+    const languageOption = run?.options.find((option) => option.long === "--lang");
+    const lengthOption = run?.options.find((option) => option.long === "--chars");
+
+    expect(languageOption?.defaultValue).toBe("zh");
+    expect(lengthOption?.defaultValue).toBeUndefined();
+  });
+
   it("extracts base64 image output from a Responses image_generation_call", () => {
     const payload = {
       output: [

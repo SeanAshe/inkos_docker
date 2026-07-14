@@ -4,6 +4,9 @@ import { resolve } from "node:path";
 import {
   SHORT_FICTION_DEFAULT_CHAPTERS,
   SHORT_FICTION_DEFAULT_CHARS_PER_CHAPTER,
+  SHORT_FICTION_EN_DEFAULT_WORDS_PER_CHAPTER,
+  SHORT_FICTION_EN_MAX_WORDS_PER_CHAPTER,
+  SHORT_FICTION_EN_MIN_WORDS_PER_CHAPTER,
   SHORT_FICTION_MAX_CHAPTERS,
   SHORT_FICTION_MAX_CHARS_PER_CHAPTER,
   SHORT_FICTION_MIN_CHAPTERS,
@@ -14,6 +17,7 @@ import {
   type Logger,
   type OnStreamProgress,
   type ShortFictionReference,
+  type ShortFictionLanguage,
 } from "@actalk/inkos-core";
 import { buildPipelineConfig, findProjectRoot, loadConfig, log, logError } from "../utils.js";
 
@@ -29,8 +33,9 @@ shortCommand
   .option("--reference <path>", "Optional reference notes/text")
   .option("--story-id <id>", "Output story id under shorts/")
   .option("--out-dir <path>", "Output directory", "shorts")
+  .option("--lang <language>", "Writing language: zh or en", "zh")
   .option("--chapters <n>", "Complete short chapter count (12-18)", String(SHORT_FICTION_DEFAULT_CHAPTERS))
-  .option("--chars <n>", "Target characters per chapter (900-1200)", String(SHORT_FICTION_DEFAULT_CHARS_PER_CHAPTER))
+  .option("--chars <n>", "Per-chapter length: zh characters (900-1200) or en words (600-800)")
   .option("--llm-base-url <url>", "Override LLM base URL")
   .option("--model <model>", "Fallback model for all short stages")
   .option("--planner-model <model>", "Model for outline creation/revision")
@@ -49,6 +54,7 @@ shortCommand
   .action(async (opts: ShortRunOptions) => {
     try {
       const root = findProjectRoot();
+      const language = parseShortFictionLanguage(opts.lang);
       const chapterCount = parseBoundedInteger(
         opts.chapters,
         SHORT_FICTION_DEFAULT_CHAPTERS,
@@ -56,13 +62,15 @@ shortCommand
         SHORT_FICTION_MIN_CHAPTERS,
         SHORT_FICTION_MAX_CHAPTERS,
       );
-      const charsPerChapter = parseBoundedInteger(
-        opts.chars,
-        SHORT_FICTION_DEFAULT_CHARS_PER_CHAPTER,
-        "chars",
-        SHORT_FICTION_MIN_CHARS_PER_CHAPTER,
-        SHORT_FICTION_MAX_CHARS_PER_CHAPTER,
-      );
+      const charsPerChapter = opts.chars === undefined
+        ? undefined
+        : parseBoundedInteger(
+            opts.chars,
+            language === "en" ? SHORT_FICTION_EN_DEFAULT_WORDS_PER_CHAPTER : SHORT_FICTION_DEFAULT_CHARS_PER_CHAPTER,
+            "chars",
+            language === "en" ? SHORT_FICTION_EN_MIN_WORDS_PER_CHAPTER : SHORT_FICTION_MIN_CHARS_PER_CHAPTER,
+            language === "en" ? SHORT_FICTION_EN_MAX_WORDS_PER_CHAPTER : SHORT_FICTION_MAX_CHARS_PER_CHAPTER,
+          );
       const reference = opts.reference ? await readReference(root, opts.reference) : undefined;
       const models = resolveShortRunModels(opts);
 
@@ -113,6 +121,7 @@ shortCommand
         outDir: opts.outDir,
         chapterCount,
         charsPerChapter,
+        language,
         cover: opts.cover,
         coverBaseUrl: opts.coverBaseUrl,
         coverEndpoint: opts.coverEndpoint,
@@ -145,6 +154,7 @@ interface ShortRunOptions {
   readonly reference?: string;
   readonly storyId?: string;
   readonly outDir: string;
+  readonly lang: string;
   readonly chapters?: string;
   readonly chars?: string;
   readonly llmBaseUrl?: string;
@@ -162,6 +172,11 @@ interface ShortRunOptions {
   readonly coverApiKeyEnv?: string;
   readonly cover?: boolean;
   readonly json?: boolean;
+}
+
+function parseShortFictionLanguage(value: string): ShortFictionLanguage {
+  if (value === "zh" || value === "en") return value;
+  throw new Error("lang must be zh or en.");
 }
 
 interface ShortRuntime {

@@ -45,8 +45,9 @@ export const ShortRunActionPayloadSchema = z.object({
   direction: z.string().min(1).optional(),
   reference: z.string().min(1).optional(),
   storyId: z.string().min(1).optional(),
+  language: z.enum(["zh", "en"]).optional(),
   chapters: z.number().int().min(12).max(18).optional(),
-  charsPerChapter: z.number().int().min(900).max(1200).optional(),
+  charsPerChapter: z.number().int().min(600).max(1200).optional(),
   cover: z.boolean().optional(),
 }).strict();
 

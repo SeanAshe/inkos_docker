@@ -365,6 +365,9 @@ export {
   SHORT_FICTION_DEFAULT_CHARS_PER_CHAPTER,
   SHORT_FICTION_MIN_CHARS_PER_CHAPTER,
   SHORT_FICTION_MAX_CHARS_PER_CHAPTER,
+  SHORT_FICTION_EN_DEFAULT_WORDS_PER_CHAPTER,
+  SHORT_FICTION_EN_MIN_WORDS_PER_CHAPTER,
+  SHORT_FICTION_EN_MAX_WORDS_PER_CHAPTER,
   ShortFictionOutlineAgent,
   ShortFictionOutlineReviewerAgent,
   ShortFictionOutlineReviserAgent,
@@ -380,6 +383,7 @@ export {
   type ShortFictionChapter,
   type ShortFictionSalesPackage,
   type ShortFictionReference,
+  type ShortFictionLanguage,
 } from "./agents/short-fiction.js";
 export {
   generateShortFictionCover,

@@ -114,6 +114,7 @@ import {
   createPlayEditTool,
   createPlayReviseTool,
   createPlayStepTool,
+  createProposeActionTool,
   createScriptCreationTool,
   createShortFictionRunTool,
   createStoryboardCreationTool,
@@ -151,6 +152,70 @@ describe("agent tools language wiring (en parity)", () => {
 
     expect(runShortFictionProductionMock).toHaveBeenCalledTimes(1);
     expect(runShortFictionProductionMock.mock.calls[0]![0]).toMatchObject({ language: "en" });
+  });
+
+  it("persists English short language and word length in the confirmation payload", async () => {
+    const result = await createProposeActionTool("en").execute("propose-short-en", {
+      action: "short_run",
+      instruction: "Write a complete English suspense short story.",
+      shortRun: {
+        direction: "an office suspense story about forged expense records",
+        language: "en",
+        chapters: 12,
+        charsPerChapter: 650,
+        cover: false,
+      },
+    } as any);
+
+    expect(result.details).toMatchObject({
+      kind: "proposed_action",
+      actionPayload: {
+        shortRun: {
+          language: "en",
+          charsPerChapter: 650,
+        },
+      },
+    });
+  });
+
+  it("records the English session language when the model omits it from shortRun", async () => {
+    const result = await createProposeActionTool("en").execute("propose-short-en-default", {
+      action: "short_run",
+      instruction: "Write a complete English suspense short story.",
+      shortRun: {
+        direction: "an office suspense story about forged expense records",
+        chapters: 12,
+        charsPerChapter: 650,
+        cover: false,
+      },
+    } as any);
+
+    expect(result.details).toMatchObject({
+      actionPayload: { shortRun: { language: "en" } },
+    });
+  });
+
+  it("lets the confirmed short payload override the project language", async () => {
+    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const tool = createShortFictionRunTool(pipeline as never, root, {
+      language: "zh",
+      actionPayload: {
+        shortRun: {
+          direction: "an English office thriller",
+          language: "en",
+          chapters: 12,
+          charsPerChapter: 650,
+          cover: false,
+        },
+      } as any,
+    });
+
+    await tool.execute("short-payload-en", { direction: "fallback direction" } as any);
+
+    expect(runShortFictionProductionMock.mock.calls[0]![0]).toMatchObject({
+      language: "en",
+      charsPerChapter: 650,
+    });
   });
 
   it("keeps short_fiction_run language undefined by default so the runner falls back to zh", async () => {

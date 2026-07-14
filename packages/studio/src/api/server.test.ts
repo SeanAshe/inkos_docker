@@ -48,6 +48,17 @@ const loadSecretsMock = vi.fn();
 const saveSecretsMock = vi.fn();
 const getServiceApiKeyMock = vi.fn();
 const createLLMTranslationModelMock = vi.fn();
+const createShortFictionRunToolMock = vi.fn((_pipeline: unknown, _root: string, _options?: unknown) => ({
+  name: "short_fiction_run",
+  execute: vi.fn(async () => ({
+    content: [{ type: "text", text: "Short fiction completed." }],
+    details: {
+      kind: "short_fiction_created",
+      storyId: "english-short",
+      finalMarkdownPath: "shorts/english-short/final/full.md",
+    },
+  })),
+}));
 type ServicePresetMock = {
   providerFamily: "openai" | "anthropic";
   baseUrl: string;
@@ -254,7 +265,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     runAgentSession: runAgentSessionMock,
     abortAgentSession: abortAgentSessionMock,
     createSubAgentTool: actual.createSubAgentTool,
-    createShortFictionRunTool: actual.createShortFictionRunTool,
+    createShortFictionRunTool: createShortFictionRunToolMock,
     createGenerateCoverTool: actual.createGenerateCoverTool,
     createPlayStartTool: actual.createPlayStartTool,
     PlayRunner: MockPlayRunner,
@@ -471,6 +482,7 @@ describe("createStudioServer daemon lifecycle", () => {
         issues: [],
       })),
     });
+    createShortFictionRunToolMock.mockClear();
     chatCompletionMock.mockReset();
     chatCompletionMock.mockResolvedValue({
       content: "pong",
@@ -2862,6 +2874,50 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(response.json()).resolves.toMatchObject({
       session: { activeBookId: "夜间派送" },
     });
+  });
+
+  it("infers English before directly executing a confirmed short action", async () => {
+    const shortSession = {
+      sessionId: "short-en-session",
+      bookId: null,
+      sessionKind: "short",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    loadBookSessionMock.mockResolvedValue(shortSession);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "Write a complete English office suspense short story about forged expense records.",
+        sessionId: "short-en-session",
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "short_run",
+        actionPayload: {
+          shortRun: {
+            direction: "an office suspense story about forged expense records",
+            chapters: 12,
+            cover: false,
+          },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(runAgentSessionMock).not.toHaveBeenCalled();
+    expect(createShortFictionRunToolMock).toHaveBeenCalledWith(
+      expect.anything(),
+      root,
+      expect.objectContaining({ language: "en" }),
+    );
   });
 
   it("persists confirmed production progress before the long-running request completes", async () => {

@@ -1353,7 +1353,7 @@ async function executeConfirmedProductionAction(args: {
     const payload = actionPayload?.shortRun;
     const direction = payload?.direction?.trim() || args.instruction.trim();
     if (!direction) throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "确认短篇缺少方向，请重新生成确认卡。", "The short fiction confirmation is missing a direction. Regenerate the confirmation card."));
-    tool = createShortFictionRunTool(args.pipeline, args.root, { actionPayload });
+    tool = createShortFictionRunTool(args.pipeline, args.root, { actionPayload, language: lang });
     params = {
       direction,
       ...(payload?.reference ? { reference: payload.reference } : {}),
@@ -1376,7 +1376,7 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "script_create") {
     const payload = actionPayload?.scriptCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建剧本缺少标题，请重新生成确认卡。", "The script creation confirmation is missing a title. Regenerate the confirmation card."));
-    tool = createScriptCreationTool(args.pipeline, args.root, { actionPayload });
+    tool = createScriptCreationTool(args.pipeline, args.root, { actionPayload, language: lang });
     params = {
       title,
       instruction: args.instruction,
@@ -1393,7 +1393,7 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "storyboard_create") {
     const payload = actionPayload?.storyboardCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建分镜缺少标题，请重新生成确认卡。", "The storyboard creation confirmation is missing a title. Regenerate the confirmation card."));
-    tool = createStoryboardCreationTool(args.pipeline, args.root, { actionPayload });
+    tool = createStoryboardCreationTool(args.pipeline, args.root, { actionPayload, language: lang });
     params = {
       title,
       instruction: args.instruction,
@@ -1411,7 +1411,7 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "interactive_film_create") {
     const payload = actionPayload?.interactiveFilmCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建互动影游缺少标题，请重新生成确认卡。", "The interactive film confirmation is missing a title. Regenerate the confirmation card."));
-    tool = createInteractiveFilmCreationTool(args.pipeline, args.root, { actionPayload });
+    tool = createInteractiveFilmCreationTool(args.pipeline, args.root, { actionPayload, language: lang });
     params = {
       title,
       instruction: args.instruction,
@@ -4292,6 +4292,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           throw new ApiError(404, "BOOK_NOT_FOUND", `Book not found: ${agentBookId}`);
         }
       }
+      const configLanguage = config.language === "en" ? "en" : "zh";
+      const bookLanguage = activeBookConfig?.language === "en" ? "en" : activeBookConfig?.language === "zh" ? "zh" : undefined;
+      const requestedLanguage = actionPayload?.shortRun?.language ?? actionPayload?.createBook?.language;
+      const surfaceLanguage = agentBookId
+        ? (bookLanguage ?? configLanguage)
+        : (requestedLanguage ?? inferLanguage(instruction));
       const streamSessionId = loadedBookSession.sessionId;
       const titleBeforeRun = bookSession.title;
       let sessionTitleBroadcasted = false;
@@ -4484,7 +4490,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             instruction,
             requestedIntent,
             actionPayload,
-            language,
+            language: surfaceLanguage,
             taskId,
             signal: taskController.signal,
             onTaskChange: (taskExec) => persistConfirmedTask(bookSession.sessionId, requestedIntent, taskExec),
@@ -4515,7 +4521,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             }
           }
 
-          const responseText = exec.result ?? pick(language, "已完成。", "Done.");
+          const responseText = exec.result ?? pick(surfaceLanguage, "已完成。", "Done.");
           const responseForUser = suppressManualTextForTool(exec) ? "" : responseText;
           await appendManualSessionMessages(root, bookSession.sessionId, [
             manualToolAssistantMessage(
@@ -4538,7 +4544,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          const failure = formatAgentActionFailure(message, language);
+          const failure = formatAgentActionFailure(message, surfaceLanguage);
           if (pendingBookId) {
             bookCreateStatus.set(pendingBookId, { status: "error", error: message });
             broadcast("book:error", { bookId: pendingBookId, sessionId: streamSessionId, error: message });
@@ -4693,10 +4699,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       // from the instruction; committed book/edit sessions keep the configured language.
       // Without this, an English request on a zh-default project gets Chinese replies — and
       // a Chinese play world, because play_start then infers from the rewritten premise.
-      const configLanguage = config.language === "en" ? "en" : "zh";
-      const bookLanguage = activeBookConfig?.language === "en" ? "en" : activeBookConfig?.language === "zh" ? "zh" : undefined;
-      const surfaceLanguage = agentBookId ? (bookLanguage ?? configLanguage) : inferLanguage(instruction);
-
       // Run pi-agent session
       const collectedToolExecs: CollectedToolExec[] = [];
       const result = await runAgentSession(
