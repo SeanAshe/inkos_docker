@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Message, ToolExecution } from "../../types";
-import { createSessionRuntime, deriveResolvedProposals, deserializeMessages, extractErrorMessage, extractToolError, markRunningToolsFailed, mergeTaskExecution, withToolExecutions } from "./runtime";
+import { createSessionRuntime, deriveResolvedProposals, deserializeMessages, extractErrorMessage, extractToolError, hasInFlightExecution, markRunningToolsFailed, mergeTaskExecution, withToolExecutions } from "./runtime";
 
 function exec(overrides: Partial<ToolExecution> & { id: string; tool: string }): ToolExecution {
   const { id, tool, ...rest } = overrides;
@@ -268,6 +268,29 @@ describe("mergeTaskExecution", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0]?.toolExecutions).toEqual([completed]);
     expect(messages[0]?.parts).toEqual([{ type: "tool", execution: completed }]);
+  });
+});
+
+describe("hasInFlightExecution", () => {
+  it("finds an execution that is still running in the session messages", () => {
+    const running = exec({ id: "task-1", tool: "short_fiction_run", status: "running", startedAt: 10 });
+    const messages = mergeTaskExecution([], running);
+
+    expect(hasInFlightExecution(messages, "task-1")).toBe(true);
+  });
+
+  it("does not treat a completed execution or an unknown id as in flight", () => {
+    const completed = exec({
+      id: "task-1",
+      tool: "short_fiction_run",
+      status: "completed",
+      startedAt: 10,
+      completedAt: 20,
+    });
+    const messages = mergeTaskExecution([], completed);
+
+    expect(hasInFlightExecution(messages, "task-1")).toBe(false);
+    expect(hasInFlightExecution(messages, "task-2")).toBe(false);
   });
 });
 

@@ -270,6 +270,20 @@ export function mergeTaskExecution(
   ];
 }
 
+export function hasInFlightExecution(
+  messages: ReadonlyArray<Message>,
+  executionId: string,
+): boolean {
+  const inFlight = (execution: ToolExecution): boolean =>
+    execution.id === executionId
+    && (execution.status === "running" || execution.status === "processing");
+
+  return messages.some((message) =>
+    (message.toolExecutions?.some(inFlight) ?? false)
+    || (message.parts?.some((part) => part.type === "tool" && inFlight(part.execution)) ?? false),
+  );
+}
+
 export function markRunningToolsFailed(
   messages: ReadonlyArray<Message>,
   error: string,

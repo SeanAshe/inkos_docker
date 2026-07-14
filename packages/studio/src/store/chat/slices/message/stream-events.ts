@@ -8,6 +8,7 @@ import {
   extractToolError,
   findRunningToolPart,
   getOrCreateStream,
+  hasInFlightExecution,
   mergeTaskExecution,
   replaceLast,
   resolveToolLabel,
@@ -269,6 +270,13 @@ export function attachSessionStreamListeners({
       if (!sessionMatchesEvent(sessionId, data) || !data?.execution) return;
       const execution = data.execution as ToolExecution;
       const running = execution.status === "running" || execution.status === "processing";
+      // 服务端在每次 SSE 连接建立时都会重放该会话的任务快照。终态快照只用于
+      // 收尾一个当前确实还在运行中的任务卡（刷新恢复场景）；如果本会话没有在
+      // 跟踪这个任务，说明它是上一轮已结束任务的残留快照，直接忽略——否则
+      // 会把本轮新建立的流关掉，导致后续实时事件全部丢失。
+      if (!running && !hasInFlightExecution(get().sessions[sessionId]?.messages ?? [], execution.id)) {
+        return;
+      }
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => ({
           messages: mergeTaskExecution(runtime.messages, execution),

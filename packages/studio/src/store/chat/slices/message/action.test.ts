@@ -320,6 +320,47 @@ describe("chat message actions", () => {
     });
   });
 
+  it("ignores a stale terminal task snapshot replayed onto a new agent stream", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "short");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: null, sessionKind: "short" } })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveAgent = resolve;
+      }));
+
+    const sent = store.getState().sendMessage(sessionId, "再生成一篇短篇", { sessionKind: "short" });
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
+
+    // 服务端在 SSE 连接建立时会重放该会话磁盘上的任务快照；
+    // 上一轮已完成的任务快照不能把本轮新建立的流关掉。
+    fakeEventSources[0]?.emit("task:snapshot", {
+      sessionId,
+      execution: {
+        id: "finished-task-9",
+        tool: "short_fiction_run",
+        label: "短篇生产",
+        status: "completed",
+        startedAt: 100,
+        completedAt: 200,
+        result: "上一轮短篇已完成",
+      },
+    });
+
+    expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: true });
+    expect(store.getState().sessions[sessionId]?.stream).not.toBeNull();
+    const staleExecutions = (store.getState().sessions[sessionId]?.messages ?? [])
+      .flatMap((message) => message.toolExecutions ?? [])
+      .filter((execution) => execution.id === "finished-task-9");
+    expect(staleExecutions).toHaveLength(0);
+
+    resolveAgent({ response: "ok", session: { sessionId, sessionKind: "short" } });
+    await sent;
+  });
+
   it("marks the active tool card as stopped without requiring a refresh", async () => {
     const store = createTestStore();
     const sessionId = store.getState().createDraftSession(null, "short");
