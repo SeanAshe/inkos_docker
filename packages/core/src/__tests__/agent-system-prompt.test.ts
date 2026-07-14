@@ -214,6 +214,20 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).not.toContain("sub_agent");
       expect(prompt).not.toContain("architect");
     });
+
+    it("fills shortRun.language from the user's requested output language instead of hardcoding the session language", () => {
+      const zhPrompt = buildAgentSystemPrompt(null, "zh", "short");
+      expect(zhPrompt).not.toContain("language=zh、chapters");
+      expect(zhPrompt).toContain("language 填用户要求的产出语言");
+      expect(zhPrompt).toContain("900-1200");
+      expect(zhPrompt).toContain("600-800");
+
+      const enPrompt = buildAgentSystemPrompt(null, "en", "short");
+      expect(enPrompt).not.toContain("language=en, chapters");
+      expect(enPrompt).toContain("the output language the user asked for");
+      expect(enPrompt).toContain("900-1200");
+      expect(enPrompt).toContain("600-800");
+    });
   });
 
   describe("script and storyboard modes", () => {

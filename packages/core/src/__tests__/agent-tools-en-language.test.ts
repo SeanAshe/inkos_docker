@@ -195,6 +195,64 @@ describe("agent tools language wiring (en parity)", () => {
     });
   });
 
+  it("lets an explicit shortRun.language=en override the zh session default in the confirmation payload", async () => {
+    const result = await createProposeActionTool("zh").execute("propose-short-zh-en", {
+      action: "short_run",
+      instruction: "用户在中文对话里要求写一篇英文办公室悬疑短篇",
+      shortRun: {
+        direction: "an English office suspense story about forged expense records",
+        language: "en",
+        chapters: 12,
+        charsPerChapter: 650,
+        cover: false,
+      },
+    } as any);
+
+    expect(result.details).toMatchObject({
+      kind: "proposed_action",
+      actionPayload: {
+        shortRun: {
+          language: "en",
+          charsPerChapter: 650,
+        },
+      },
+    });
+  });
+
+  it("does not inject a zh charsPerChapter default when a zh session confirms an en short", async () => {
+    const result = await createProposeActionTool("zh").execute("propose-short-zh-en-no-length", {
+      action: "short_run",
+      instruction: "用户在中文对话里要求写一篇英文短篇，未指定每章字数",
+      shortRun: {
+        direction: "an English office suspense story",
+        language: "en",
+        cover: false,
+      },
+    } as any);
+
+    const shortRun = (result.details as any).actionPayload.shortRun;
+    expect(shortRun.language).toBe("en");
+    expect(shortRun.charsPerChapter).toBeUndefined();
+
+    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const tool = createShortFictionRunTool(pipeline as never, root, {
+      language: "zh",
+      actionPayload: { shortRun } as any,
+    });
+    await tool.execute("short-zh-en-no-length", { direction: "fallback direction" } as any);
+
+    const runnerOptions = runShortFictionProductionMock.mock.calls[0]![0] as any;
+    expect(runnerOptions.language).toBe("en");
+    expect(runnerOptions.charsPerChapter).toBeUndefined();
+  });
+
+  it("documents in the shortRun.language schema that the output language may differ from the conversation language", () => {
+    const parameters = createProposeActionTool("zh").parameters as any;
+    const description = parameters.properties.shortRun.properties.language.description as string;
+    expect(description).toMatch(/output language/i);
+    expect(description).toMatch(/differ from the conversation language/i);
+  });
+
   it("lets the confirmed short payload override the project language", async () => {
     const pipeline = { createAgentContext: vi.fn(() => ({})) };
     const tool = createShortFictionRunTool(pipeline as never, root, {
