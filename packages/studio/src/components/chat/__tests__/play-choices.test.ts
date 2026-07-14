@@ -46,6 +46,24 @@ describe("latestPlayChoices", () => {
     });
   });
 
+  it("does not revive choices from an older turn when the latest Play result has none", () => {
+    const messages = [
+      { role: "assistant", parts: [{ type: "tool", execution: { id: "turn-1", tool: "play_step", status: "completed", details: { suggestedActions: ["看账本", "问来人"] } } }] },
+      { role: "assistant", parts: [{ type: "tool", execution: { id: "turn-2", tool: "play_step", status: "completed", details: { suggestedActions: [] } } }] },
+    ] as any;
+
+    expect(latestPlayChoiceSet(messages)).toBeNull();
+  });
+
+  it("hides choices from the previous turn while a new Play turn is running", () => {
+    const messages = [
+      { role: "assistant", parts: [{ type: "tool", execution: { id: "turn-1", tool: "play_step", status: "completed", details: { suggestedActions: ["看账本", "问来人"] } } }] },
+      { role: "assistant", parts: [{ type: "tool", execution: { id: "turn-2", tool: "play_step", status: "running" } }] },
+    ] as any;
+
+    expect(latestPlayChoiceSet(messages)).toBeNull();
+  });
+
   it("returns [] when there is no play execution", () => {
     expect(latestPlayChoices([{ role: "user", content: "hi" }] as any)).toEqual([]);
   });

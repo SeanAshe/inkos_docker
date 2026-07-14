@@ -29,17 +29,17 @@ export function latestPlayChoiceSet(messages: ReadonlyArray<Message>): PlayChoic
     const parts = messages[i]?.parts ?? [];
     for (let p = parts.length - 1; p >= 0; p--) {
       const part = parts[p];
-      if (part.type !== "tool") continue;
-      const set = choiceSetFromExecution(part.execution, `message-${i}-part-${p}`);
-      if (set) return set;
+      if (part.type !== "tool" || !PLAY_TOOLS.has(part.execution.tool)) continue;
+      return choiceSetFromExecution(part.execution, `message-${i}-part-${p}`);
     }
 
     // Direct tool executions created by confirmed action buttons may be present
     // on the flat message before they are rehydrated into chronological parts.
     const toolExecutions = messages[i]?.toolExecutions ?? [];
     for (let t = toolExecutions.length - 1; t >= 0; t--) {
-      const set = choiceSetFromExecution(toolExecutions[t], `message-${i}-execution-${t}`);
-      if (set) return set;
+      const execution = toolExecutions[t];
+      if (!PLAY_TOOLS.has(execution.tool)) continue;
+      return choiceSetFromExecution(execution, `message-${i}-execution-${t}`);
     }
   }
   return null;
