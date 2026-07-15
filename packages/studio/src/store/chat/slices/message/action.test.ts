@@ -852,4 +852,121 @@ describe("chat message actions", () => {
     resolveAgent({ response: "聊完了。", session: { sessionId, sessionKind: "short" } });
     await sent;
   });
+
+  it("drops id-less logs and progress instead of attaching them to a background task card", async () => {
+    const store = createTestStore();
+    const sessionId = await setupRunningTaskSession(store);
+    // 快照重放给任务卡一个 active 阶段，验证无 id 进度也不会写进去
+    fakeEventSources[0]?.emit("task:snapshot", {
+      sessionId,
+      execution: {
+        id: "direct-short_run-1",
+        tool: "short_fiction_run",
+        label: "短篇生产",
+        status: "running",
+        startedAt: 10,
+        stages: [{ label: "撰写正文", status: "active" }],
+      },
+    });
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson.mockClear();
+    fetchJson.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAgent = resolve;
+    }));
+    const sent = store.getState().sendMessage(sessionId, "顺便聊两句");
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(2));
+
+    // 聊天轮还没有自己的工具卡：无 id 的 log / llm:progress 不能回退到
+    // 后台任务卡（会反向串排），只能丢弃（任务快照重放会带回累积日志）。
+    fakeEventSources[1]?.emit("log", {
+      sessionId,
+      level: "info",
+      tag: "studio",
+      message: "游离的聊天轮日志",
+    });
+    fakeEventSources[1]?.emit("llm:progress", {
+      sessionId,
+      status: "思考中",
+      elapsedMs: 900,
+      totalChars: 120,
+      chineseChars: 100,
+    });
+    expect(findTaskExecution(store, sessionId)?.logs).toBeUndefined();
+    expect(findTaskExecution(store, sessionId)?.stages?.[0]?.progress).toBeUndefined();
+
+    // 聊天轮工具卡出现后：无 id 日志照旧落在聊天卡上，任务卡不受影响
+    fakeEventSources[1]?.emit("tool:start", {
+      sessionId,
+      id: "chat-tool-1",
+      tool: "sub_agent",
+      args: { agent: "auditor" },
+    });
+    fakeEventSources[1]?.emit("log", {
+      sessionId,
+      level: "info",
+      tag: "studio",
+      message: "审稿进行中",
+    });
+    expect(findChatToolExecution(store, sessionId)?.logs).toEqual(["审稿进行中"]);
+    expect(findTaskExecution(store, sessionId)?.logs).toBeUndefined();
+
+    resolveAgent({ response: "聊完了。", session: { sessionId, sessionKind: "short" } });
+    await sent;
+  });
+
+  it("routes task-tagged context compression to the task card and never into the chat stream", async () => {
+    const store = createTestStore();
+    const sessionId = await setupRunningTaskSession(store);
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson.mockClear();
+    fetchJson.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAgent = resolve;
+    }));
+    const sent = store.getState().sendMessage(sessionId, "顺便聊两句");
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(2));
+
+    const allExecutions = () => (store.getState().sessions[sessionId]?.messages ?? [])
+      .flatMap((message) => [
+        ...(message.toolExecutions ?? []),
+        ...(message.parts ?? []).flatMap((part) => (part.type === "tool" ? [part.execution] : [])),
+      ]);
+
+    // 任务 pipeline 的压缩事件带任务 execution id：作为阶段挂到任务卡上
+    fakeEventSources[1]?.emit("context:compression", {
+      sessionId,
+      executionId: "direct-short_run-1",
+      category: "story_context",
+      phase: "start",
+      protectedTokens: 1200,
+    });
+    expect(findTaskExecution(store, sessionId)?.stages).toEqual([
+      expect.objectContaining({ label: "压缩故事上下文", status: "active" }),
+    ]);
+    // 不产生聊天流内容：没有 context-* 伪工具卡被写进消息
+    expect(allExecutions().some((execution) => execution.id.startsWith("context-"))).toBe(false);
+
+    fakeEventSources[1]?.emit("context:compression", {
+      sessionId,
+      executionId: "direct-short_run-1",
+      category: "story_context",
+      phase: "end",
+    });
+    expect(findTaskExecution(store, sessionId)?.stages).toEqual([
+      expect.objectContaining({ label: "压缩故事上下文", status: "completed" }),
+    ]);
+
+    // id 指向的卡不存在：事件丢弃，同样不写进聊天流
+    fakeEventSources[1]?.emit("context:compression", {
+      sessionId,
+      executionId: "direct-unknown-9",
+      category: "session_context",
+      phase: "start",
+    });
+    expect(allExecutions().some((execution) => execution.id.startsWith("context-"))).toBe(false);
+
+    resolveAgent({ response: "聊完了。", session: { sessionId, sessionKind: "short" } });
+    await sent;
+  });
 });

@@ -27,6 +27,7 @@ type ContextCompressionPhase = "start" | "end" | "error";
 
 interface ContextCompressionEventPayload {
   readonly sessionId?: string;
+  readonly executionId?: string;
   readonly category?: ContextCompressionCategory;
   readonly phase?: ContextCompressionPhase;
   readonly message?: string;
@@ -110,9 +111,27 @@ export function appendBoundedToolLogs(
 }
 
 /**
- * 倒序扫描消息，找到最近一个仍在运行的工具卡并更新它。
- * 任务与聊天并行时，任务卡挂在更早的任务轮消息上，不能只看当前 streamTs
- * 的消息。update 返回 null 表示这张卡不需要更新（整体视为 no-op）。
+ * 倒序找最近一个运行中的聊天轮工具卡；跳过带 background 标记的后台任务卡。
+ * 无 id 的回退事件只属于聊天轮，落到任务卡上会把聊天日志串排进任务里。
+ */
+function findRunningChatToolPart(
+  parts: ReadonlyArray<MessagePart>,
+): (MessagePart & { type: "tool" }) | undefined {
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const part = parts[i]!;
+    if (part.type === "tool" && part.execution.status === "running" && !part.execution.background) {
+      return part;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 倒序扫描消息，找到最近一个仍在运行的聊天轮工具卡并更新它。
+ * 任务与聊天并行时，后台任务卡（execution.background）被跳过——无 id 的
+ * 回退事件不属于任务；跳过后没有可挂的卡时返回 null，事件整体丢弃
+ *（任务快照重放会带回任务自己的累积日志，不丢信息）。
+ * update 返回 null 表示这张卡不需要更新（整体视为 no-op）。
  */
 export function updateLatestRunningToolMessage(
   messages: ReadonlyArray<Message>,
@@ -120,7 +139,7 @@ export function updateLatestRunningToolMessage(
 ): ReadonlyArray<Message> | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i]!;
-    const running = findRunningToolPart([...(message.parts ?? [])]);
+    const running = findRunningChatToolPart(message.parts ?? []);
     if (!running) continue;
     const updated = update(running.execution);
     if (!updated) return null;
@@ -573,8 +592,18 @@ export function attachSessionStreamListeners({
       if (!sessionMatchesEvent(sessionId, data) || !data?.category || !data.phase) return;
       const category = data.category;
       const phase = data.phase;
+      const executionId = eventExecutionId(data);
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
+          // 带 executionId 的压缩事件（后台生产任务的 pipeline）：作为阶段挂到
+          // 对应的任务卡上；卡不存在时丢弃这条（任务快照重放会带回状态），
+          // 绝不写进聊天流消息——并行时会把任务状态串排进聊天轮。
+          if (executionId) {
+            const messages = updateToolPartById(runtime.messages, executionId, (execution) =>
+              applyContextCompressionToExecution(execution, category, phase, data),
+            );
+            return messages ? { messages } : {};
+          }
           const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
           const parts = [...(stream.parts ?? [])];
           applyContextCompressionToParts(parts, category, phase, data);
@@ -637,6 +666,25 @@ function upsertCompressionStage(
 function findRunningExecution(parts: MessagePart[]): ToolExecution | undefined {
   const running = findRunningToolPart(parts);
   return running?.execution;
+}
+
+/** 按 id 定位到的任务卡：把压缩事件作为阶段挂上去（不可变更新）。 */
+function applyContextCompressionToExecution(
+  execution: ToolExecution,
+  category: ContextCompressionCategory,
+  phase: ContextCompressionPhase,
+  data: ContextCompressionEventPayload,
+): ToolExecution {
+  const stages = upsertCompressionStage(execution.stages, category, phase, data);
+  if (phase === "error") {
+    return {
+      ...execution,
+      stages,
+      status: "error",
+      error: data.message ?? `${compressionLabel(category)}${tr("失败", " failed")}`,
+    };
+  }
+  return { ...execution, stages };
 }
 
 function applyContextCompressionToParts(

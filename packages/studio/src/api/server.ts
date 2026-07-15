@@ -1674,11 +1674,6 @@ async function executeConfirmedProductionAction(args: {
         const progress = toolResultText(partialResult, lang);
         if (progress) exec.logs = [...(exec.logs ?? []), progress].slice(-80);
         void args.onTaskChange(exec).catch(() => undefined);
-        broadcast("tool:update", {
-          sessionId: args.streamSessionId,
-          tool: tool.name,
-          partialResult,
-        });
       },
     );
     // 工具可以在结果里带 isError=true 表示"执行完成但结果需要人工处理"
@@ -4963,13 +4958,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
                 tool: event.toolName,
                 args,
                 stages,
-              });
-            }
-            if (event.type === "tool_execution_update") {
-              broadcast("tool:update", {
-                sessionId: streamSessionId,
-                tool: event.toolName,
-                partialResult: event.partialResult,
               });
             }
             if (event.type === "tool_execution_end") {
