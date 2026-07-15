@@ -3860,6 +3860,108 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(access(studioTaskSnapshotPath(root, "deleted-task-session"))).rejects.toThrow();
   });
 
+  // 制造"controller 已注册、磁盘还没有任务快照"的窗口：任务开始时预写用户
+  // 指令的第一次 appendManualSessionMessages 挂起，此时确认分支已同步注册
+  // AbortController，但首次快照持久化（在 executeConfirmedProductionAction
+  // 内部）还没执行。
+  function taskInPersistWindow(sessionId: string): {
+    releaseInstructionAppend: () => void;
+    getCapturedSignal: () => AbortSignal | undefined;
+  } {
+    let releaseInstructionAppend!: () => void;
+    const instructionGate = new Promise<void>((resolve) => {
+      releaseInstructionAppend = resolve;
+    });
+    appendManualSessionMessagesMock.mockImplementationOnce(async () => {
+      await instructionGate;
+    });
+    let capturedSignal: AbortSignal | undefined;
+    createShortFictionRunToolMock.mockImplementationOnce(() => ({
+      name: "short_fiction_run",
+      execute: vi.fn(async (_id: string, _params: unknown, signal: AbortSignal) => {
+        capturedSignal = signal;
+        signal.throwIfAborted();
+        return { content: [{ type: "text", text: "窗口外完成（不应到达）" }] };
+      }),
+    }));
+    loadBookSessionMock.mockResolvedValue({
+      sessionId,
+      bookId: null,
+      sessionKind: "short",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    return { releaseInstructionAppend, getCapturedSignal: () => capturedSignal };
+  }
+
+  function startShortRunTask(
+    app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> },
+    sessionId: string,
+  ): Promise<Response> {
+    return Promise.resolve(app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "写一篇冷库账本短篇。",
+        sessionId,
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "short_run",
+        actionPayload: { shortRun: { direction: "冷库账本悬疑", cover: false } },
+      }),
+    }));
+  }
+
+  it("aborts a just-started task from memory before its first snapshot persists", async () => {
+    const window = taskInPersistWindow("window-abort-session");
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const pendingTask = startShortRunTask(app, "window-abort-session");
+    await vi.waitFor(() => expect(appendManualSessionMessagesMock).toHaveBeenCalled());
+    // 窗口成立：controller 已注册，但磁盘上还没有任务快照
+    await expect(loadStudioTaskSnapshot(root, "window-abort-session")).resolves.toBeNull();
+
+    // 窗口内中止：必须从内存拿到任务控制器，不能依赖磁盘快照
+    const abortResponse = await app.request("http://localhost/api/v1/sessions/window-abort-session/abort", {
+      method: "POST",
+    });
+    expect(abortResponse.status).toBe(200);
+    await expect(abortResponse.json()).resolves.toMatchObject({ ok: true, aborted: true });
+
+    window.releaseInstructionAppend();
+    const response = await pendingTask;
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(window.getCapturedSignal()?.aborted).toBe(true);
+  });
+
+  it("aborts a just-started task from memory when its session is deleted before the first snapshot persists", async () => {
+    const window = taskInPersistWindow("window-delete-session");
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const pendingTask = startShortRunTask(app, "window-delete-session");
+    await vi.waitFor(() => expect(appendManualSessionMessagesMock).toHaveBeenCalled());
+    await expect(loadStudioTaskSnapshot(root, "window-delete-session")).resolves.toBeNull();
+
+    const deleteResponse = await app.request("http://localhost/api/v1/sessions/window-delete-session", {
+      method: "DELETE",
+    });
+    expect(deleteResponse.status).toBe(200);
+
+    window.releaseInstructionAppend();
+    const response = await pendingTask;
+    // 删除会话必须中止窗口内刚启动的任务
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(window.getCapturedSignal()?.aborted).toBe(true);
+    // 已删除会话的快照不会被任务的后续持久化重建出来
+    await expect(access(studioTaskSnapshotPath(root, "window-delete-session"))).rejects.toThrow();
+  });
+
   it("executes confirmed play-start action directly without asking the chat model to call tools", async () => {
     const playSession = {
       sessionId: "play-session-1",

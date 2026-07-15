@@ -2623,11 +2623,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   const state = new StateManager(root);
   let cachedConfig = initialConfig;
   const activeConfirmedTasks = new Map<string, AbortController>();
-  // 确认式生产任务的单任务名额（sessionId 集合）。原来的检查是"await 读快照
+  // 确认式生产任务的单任务名额（sessionId → taskId）。原来的检查是"await 读快照
   // → 之后才 set controller"的 check-then-act：两个并发确认请求都能通过检查，
   // 双任务同时启动、快照互相覆盖。这里在任何 await 之前同步占位，占位失败的
   // 请求直接 409；任务结束（成功/失败）后在 finally 释放。
-  const reservedProductionSessions = new Set<string>();
+  // 值记 taskId：controller 注册与首次快照持久化之间有多个 await 间隙，删除/
+  // 中止在这个窗口内从磁盘读不到快照，必须先经内存 sessionId → taskId →
+  // controller 找到刚启动的任务。
+  const reservedProductionSessions = new Map<string, string>();
   // 已删除会话的 sessionId：删除会话时中止其生产任务，任务随后的错误持久化
   // 不能把快照文件重新写回来（给已删除的会话"还魂"）。同名会话重新创建时移除标记。
   const deletedSessionIds = new Set<string>();
@@ -2688,6 +2691,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     if (!task) return null;
     const running = task.execution.status === "running" || task.execution.status === "processing";
     return running && activeConfirmedTasks.has(task.execution.id) ? task : null;
+  };
+
+  // 找该会话正在运行的任务控制器：优先查内存（预留表 sessionId → taskId →
+  // controller），磁盘快照只作回退。controller 注册与首次快照持久化之间有多个
+  // await 间隙，窗口内删除/中止只靠磁盘快照会漏掉刚启动的任务。
+  const findRunningTaskController = async (sessionId: string): Promise<AbortController | undefined> => {
+    const reservedTaskId = reservedProductionSessions.get(sessionId);
+    const reserved = reservedTaskId ? activeConfirmedTasks.get(reservedTaskId) : undefined;
+    if (reserved) return reserved;
+    const task = await loadReconciledTaskSnapshot(sessionId);
+    return task ? activeConfirmedTasks.get(task.execution.id) : undefined;
   };
 
   app.use("/*", cors());
@@ -4384,8 +4398,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     // 先标记删除，再中止任务：任务被中止后的错误持久化会检查这个标记，
     // 不会把已删除会话的快照文件重建出来。
     deletedSessionIds.add(sessionId);
-    const task = await loadReconciledTaskSnapshot(sessionId);
-    const controller = task ? activeConfirmedTasks.get(task.execution.id) : undefined;
+    const controller = await findRunningTaskController(sessionId);
     controller?.abort();
     await Promise.all([
       deleteBookSession(root, sessionId),
@@ -4402,8 +4415,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const scope = body.scope === "chat" ? "chat" : "all";
     let taskAborted = false;
     if (scope === "all") {
-      const task = await loadReconciledTaskSnapshot(sessionId);
-      const controller = task ? activeConfirmedTasks.get(task.execution.id) : undefined;
+      const controller = await findRunningTaskController(sessionId);
       controller?.abort();
       taskAborted = Boolean(controller);
     }
@@ -4721,7 +4733,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         if (reservedProductionSessions.has(reservedSessionId)) {
           return productionTaskBusyResponse();
         }
-        reservedProductionSessions.add(reservedSessionId);
+        reservedProductionSessions.set(reservedSessionId, confirmedTaskId);
 
         const taskId = confirmedTaskId;
         const taskController = new AbortController();
