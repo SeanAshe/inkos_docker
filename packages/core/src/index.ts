@@ -397,6 +397,46 @@ export {
   type ShortFictionRunRuntimes,
 } from "./pipeline/short-fiction-runner.js";
 
+// Narrative forecast (issue #342): non-canonical multi-branch story projection
+export {
+  FORECAST_MIN_BRANCHES,
+  FORECAST_MAX_BRANCHES,
+  FORECAST_DEFAULT_BRANCHES,
+  FORECAST_MIN_HORIZON,
+  FORECAST_MAX_HORIZON,
+  FORECAST_DEFAULT_HORIZON,
+  NarrativeForecastSchema,
+  ForecastBranchSchema,
+  parseForecastModelOutput,
+  type NarrativeForecast,
+  type ForecastBranch,
+  type ForecastBeat,
+  type ForecastRisk,
+  type ForecastStatus,
+  type ForecastModelOutput,
+} from "./forecast/schema.js";
+export { ForecastStore, assertSafeForecastId, type ForecastStoreOptions } from "./forecast/store.js";
+export {
+  buildForecastContext,
+  computeContextFingerprint,
+  renderForecastContextMarkdown,
+  type ForecastContext,
+  type ForecastContextSections,
+} from "./forecast/context-builder.js";
+export { NarrativeForecastAgent, type ForecastGenerationInput } from "./forecast/agent.js";
+export { renderForecastComparisonMarkdown, renderSelectedBranchPlanMarkdown } from "./forecast/render.js";
+export {
+  createNarrativeForecast,
+  getNarrativeForecast,
+  selectNarrativeBranch,
+  type CreateNarrativeForecastOptions,
+  type GetNarrativeForecastOptions,
+  type SelectNarrativeBranchOptions,
+  type NarrativeForecastCreateResult,
+  type NarrativeForecastGetResult,
+  type NarrativeForecastSelectResult,
+} from "./forecast/runner.js";
+
 // Agent (pi-agent integration)
 export * from "./agent/index.js";
 

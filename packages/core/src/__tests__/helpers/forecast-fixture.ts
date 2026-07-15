@@ -1,4 +1,6 @@
-import type { ForecastBranch, NarrativeForecast } from "../../forecast/schema.js";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import type { ForecastBranch, ForecastModelBranch, NarrativeForecast } from "../../forecast/schema.js";
 
 export function makeForecastBranch(overrides: Partial<ForecastBranch> = {}): ForecastBranch {
   return {
@@ -25,6 +27,53 @@ export function makeForecastBranch(overrides: Partial<ForecastBranch> = {}): For
     intentAlignment: { score: 62, rationale: "偏离作者意图中的复仇主线，但制造了新张力。" },
     ...overrides,
   };
+}
+
+export function makeModelBranch(overrides: Partial<ForecastBranch> = {}): ForecastModelBranch {
+  const { branchId: _branchId, ...rest } = makeForecastBranch(overrides);
+  return rest;
+}
+
+/** Minimal canonical book on disk for forecast runner tests. */
+export async function writeForecastFixtureBook(bookDir: string): Promise<void> {
+  await mkdir(join(bookDir, "chapters"), { recursive: true });
+  await mkdir(join(bookDir, "story", "state"), { recursive: true });
+  await mkdir(join(bookDir, "story", "outline"), { recursive: true });
+
+  await writeFile(join(bookDir, "book.json"), JSON.stringify({ id: "demo-book", title: "示例书", language: "zh" }), "utf-8");
+  await writeFile(join(bookDir, "chapters", "0001_开局.md"), "第一章正文", "utf-8");
+  await writeFile(join(bookDir, "chapters", "0002_升级.md"), "第二章正文", "utf-8");
+  await writeFile(join(bookDir, "story", "state", "current_state.json"), JSON.stringify({ facts: ["主角在东城"] }), "utf-8");
+  await writeFile(join(bookDir, "story", "state", "hooks.json"), JSON.stringify({ hooks: [] }), "utf-8");
+  await writeFile(join(bookDir, "story", "author_intent.md"), "# 作者意图\n复仇主线", "utf-8");
+  await writeFile(join(bookDir, "story", "current_focus.md"), "# 当前聚焦\n推进证据链", "utf-8");
+  await writeFile(join(bookDir, "story", "current_state.md"), "# 当前状态\n主角在东城", "utf-8");
+  await writeFile(join(bookDir, "story", "pending_hooks.md"), "| hook_id | 描述 |\n| --- | --- |\n| hook-03 | 遗嘱 |", "utf-8");
+  await writeFile(join(bookDir, "story", "outline", "story_frame.md"), "# 故事框架\n都市复仇", "utf-8");
+}
+
+/**
+ * Snapshot every canonical file under bookDir (excluding the forecast output
+ * directory) so tests can assert that forecast operations never touch canon.
+ */
+export async function snapshotCanonicalFiles(bookDir: string): Promise<ReadonlyMap<string, string>> {
+  const snapshot = new Map<string, string>();
+  await walk(bookDir, bookDir, snapshot);
+  return snapshot;
+}
+
+async function walk(root: string, dir: string, snapshot: Map<string, string>): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    const rel = relative(root, path);
+    if (rel.startsWith(join("story", "runtime", "narrative-forecasts"))) continue;
+    if (entry.isDirectory()) {
+      await walk(root, path, snapshot);
+    } else {
+      snapshot.set(rel, await readFile(path, "utf-8"));
+    }
+  }
 }
 
 export function makeForecast(overrides: Partial<NarrativeForecast> = {}): NarrativeForecast {
