@@ -940,6 +940,7 @@ describe("runAgentSession cache — bookId switch", () => {
 
     // 同会话后台生产任务运行中：host 传 suppressProductionTools，工具表剔除
     // 会创建/修改书籍与产物的生产工具，只保留读取与资料类工具。
+    // 叙事推演三工具只读写 story/runtime/ 下的非正史产物、不碰正史，任务运行期间保留。
     await runAgentSession(
       { sessionId: "suppress-session", bookId: "book-a", language: "zh", pipeline, projectRoot, model, suppressProductionTools: true },
       "任务在跑吗？",
@@ -949,6 +950,9 @@ describe("runAgentSession cache — bookId switch", () => {
       "research_web",
       "ingest_material",
       "retrieve_material",
+      "create_narrative_forecast",
+      "get_narrative_forecast",
+      "select_narrative_branch",
       "grep",
       "ls",
     ]);
@@ -971,6 +975,9 @@ describe("runAgentSession cache — bookId switch", () => {
       "ingest_material",
       "retrieve_material",
       "import_chapters",
+      "create_narrative_forecast",
+      "get_narrative_forecast",
+      "select_narrative_branch",
       "grep",
       "ls",
     ]);
