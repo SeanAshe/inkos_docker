@@ -25,7 +25,13 @@ import { createPlayDB, type PlayGraphDB } from "../play/play-db-factory.js";
 import { PlayRunner, type PlayOpeningSeedResult, type PlayReplayResult, type PlayStepResult, type PlayVariantRestoreResult } from "../play/play-runner.js";
 import { PlayStore } from "../play/play-store.js";
 import type { AgentContext } from "../agents/base.js";
-import { ActionPayloadSchema, isUsablePlayInitialScene, type ActionPayload } from "../interaction/action-envelope.js";
+import {
+  ActionPayloadSchema,
+  isUsablePlayInitialScene,
+  shortRunCharsPerChapterError,
+  shortRunCharsPerChapterRange,
+  type ActionPayload,
+} from "../interaction/action-envelope.js";
 import { ResearchSearchConfigSchema } from "../models/project.js";
 import { searchWeb } from "../utils/web-search.js";
 
@@ -189,7 +195,7 @@ const ProposeActionParams = Type.Object({
     charsPerChapter: Type.Optional(Type.Number({
       minimum: 600,
       maximum: 1200,
-      description: "Confirmed per-chapter length: 900-1200 Chinese characters for zh, or 600-800 English words for en. Do not put total story length here.",
+      description: "Confirmed per-chapter length in the story language's native unit. zh shorts only accept 900-1200 Chinese characters; en shorts only accept 600-800 English words. Values outside the selected language's range are rejected before the task starts. Do not put total story length here.",
     })),
     cover: Type.Optional(Type.Boolean({
       description: "Whether to attempt cover generation.",
@@ -1281,7 +1287,7 @@ const ShortFictionRunParams = Type.Object({
     description: "Target complete short chapter count, 12-18. Default 12.",
   })),
   charsPerChapter: Type.Optional(Type.Number({
-    description: "Per-chapter length in the story language's native unit: 900-1200 Chinese characters (default 1000) for zh, or 600-800 English words (default 650) for en. Do not use total story length here.",
+    description: "Per-chapter length in the story language's native unit: 900-1200 Chinese characters (default 1000) for zh, or 600-800 English words (default 650) for en. Values outside the story language's range are rejected before the pipeline starts. Do not use total story length here.",
   })),
   cover: Type.Optional(Type.Boolean({
     description: "Whether to attempt cover image generation after synopsis and cover prompt. Default true; use false if the user only wants text assets.",
@@ -1305,6 +1311,20 @@ const ShortFictionRunParams = Type.Object({
 
 type ShortFictionRunParamsType = Static<typeof ShortFictionRunParams>;
 
+// 启动 pipeline 之前校验 charsPerChapter 是否落在最终语言的合法区间：
+// 确认卡 payload 在 language 缺省时只能做 600-1200 并集校验，这里能拿到最终
+// 语言（payload.language ?? 会话语言 ?? zh，与 runner 的默认一致），越界立即
+// 抛出带合法范围的双语错误，不让任务开跑后才在 runner 中途失败。
+function assertShortRunCharsPerChapter(
+  value: number | undefined,
+  language: "zh" | "en",
+): void {
+  if (value === undefined) return;
+  const { min, max } = shortRunCharsPerChapterRange(language);
+  if (Number.isInteger(value) && value >= min && value <= max) return;
+  throw new Error(shortRunCharsPerChapterError(value, language));
+}
+
 export function createShortFictionRunTool(
   pipeline: PipelineRunner,
   projectRoot: string,
@@ -1326,6 +1346,9 @@ export function createShortFictionRunTool(
     ): Promise<AgentToolResult<unknown>> {
       const progress = (message: string) => onUpdate?.(textResult(message));
       const shortPayload = options.actionPayload?.shortRun;
+      const language = shortPayload?.language ?? options.language;
+      const charsPerChapter = shortPayload?.charsPerChapter ?? params.charsPerChapter;
+      assertShortRunCharsPerChapter(charsPerChapter, language ?? "zh");
       const result = await runPipelineWithAbortSignal(
         pipeline,
         _signal,
@@ -1343,8 +1366,8 @@ export function createShortFictionRunTool(
           ...((shortPayload?.reference ?? params.reference) ? { reference: { text: shortPayload?.reference ?? params.reference! } } : {}),
           storyId: shortPayload?.storyId ?? params.storyId,
           chapterCount: shortPayload?.chapters ?? params.chapters,
-          charsPerChapter: shortPayload?.charsPerChapter ?? params.charsPerChapter,
-          language: shortPayload?.language ?? options.language,
+          charsPerChapter,
+          language,
           cover: shortPayload?.cover ?? params.cover,
           coverBaseUrl: params.coverBaseUrl,
           coverEndpoint: params.coverEndpoint,
