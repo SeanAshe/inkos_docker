@@ -27,6 +27,7 @@ import { evalCommand } from "./commands/eval.js";
 import { importCommand } from "./commands/import.js";
 import { fanficCommand } from "./commands/fanfic.js";
 import { shortCommand } from "./commands/short-fiction.js";
+import { forecastCommand } from "./commands/forecast.js";
 import { translateCommand } from "./commands/translate.js";
 import { createStudioCommand, launchStudioEntry } from "./commands/studio.js";
 import { consolidateCommand } from "./commands/consolidate.js";
@@ -90,6 +91,7 @@ export function createProgram(hooks: ProgramHooks = {}): Command {
   program.addCommand(importCommand);
   program.addCommand(fanficCommand);
   program.addCommand(shortCommand);
+  program.addCommand(forecastCommand);
   program.addCommand(translateCommand);
   program.addCommand(createStudioCommand({ launchStudio: hooks.launchStudio }));
   program.addCommand(consolidateCommand);
