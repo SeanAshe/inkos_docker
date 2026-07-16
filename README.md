@@ -13,6 +13,19 @@
   <a href="https://clawhub.ai/narcooo/inkos"><img src="https://img.shields.io/badge/🦞%20ClawHub-Skill-FF6B35?labelColor=1a1a1a" alt="ClawHub Skill"></a>
 </p>
 
+<p align="center">
+  <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a>
+</p>
+
+<p align="center">
+  <strong>InkOS 网页版上线！</strong>
+  <a href="https://huohuaapi.com/apps">立刻体验</a>
+</p>
+
+---
+
+InkOS 是一个面向故事创作与多语言翻译的 AI Agent 系统：长篇连载、独立短篇、剧本剧作、同人番外、仿写续写、互动影游、开放世界和长文翻译，都可以从同一个工作台开始。支持 Studio、TUI、CLI 交互形式，把创意、设定、角色、记忆、审稿、修订、封面、互动状态和跨语言交付交给智能体统一管理。
+
 <p align="left">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/1/2026-06-05/1d8h69mt3v89kkekg24gg">
@@ -29,19 +42,6 @@
 感谢 Kimi 赞助本项目！Kimi K2.7 是 Moonshot AI 推出的开源智能体模型。搭配 InkOS，Kimi 可以参与长短篇小说、剧本、互动影游与多语言内容的规划、写作、审稿和修订；InkOS 则持续管理角色、设定、伏笔与故事状态，让长篇创作更连贯、更可控。
 
 InkOS Studio 已支持 Moonshot（Kimi）。前往 Kimi 开放平台（[中文站](https://platform.moonshot.cn/)｜[Global](https://platform.moonshot.ai/)）获取 API Key，即可开始创作。
-
-<p align="center">
-  <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a>
-</p>
-
-<p align="center">
-  <strong>InkOS 网页版上线！</strong>
-  <a href="https://huohuaapi.com/apps">立刻体验</a>
-</p>
-
----
-
-InkOS 是一个面向故事创作与多语言翻译的 AI Agent 系统：长篇连载、独立短篇、剧本剧作、同人番外、仿写续写、互动影游、开放世界和长文翻译，都可以从同一个工作台开始。支持 Studio、TUI、CLI 交互形式，把创意、设定、角色、记忆、审稿、修订、封面、互动状态和跨语言交付交给智能体统一管理。
 
 > 💡 **写小说，先给 Agent 接一层专业数据** —— 写小说不只缺模型，更缺素材。推荐搭配 [**火花数据API（huohuaapi）**](https://huohuaapi.com/)：按调用计费的小说 / 网文创作数据，让 Agent 动笔前先查小说正文、章节结构、人物设定、文风和创作方法等带来源素材，而不是只靠 Prompt 硬凑一份“剧情提纲”。
 

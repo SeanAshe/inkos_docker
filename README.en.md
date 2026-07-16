@@ -14,6 +14,14 @@
 </p>
 
 <p align="center">
+  <a href="README.md">中文</a> | English | <a href="README.ja.md">日本語</a>
+</p>
+
+---
+
+InkOS is an AI Agent system for story creation and multilingual translation: long-form novels, standalone short fiction, scripts, storyboards, fan fiction, spinoffs, style imitation, continuation, interactive film projects, interactive worlds, and long-document translation all start from the same workbench. Studio Chat, CLI, and TUI share the same action surface for discussion, confirmed actions, generation, review, persistent editing, and cross-language delivery.
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/1/2026-06-05/1d8h69mt3v89kkekg24gg">
     <img alt="Kimi Open Source Friends" width="760" src="https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/1/2026-06-05/1d8h69fudcmosb3pipls0">
@@ -27,14 +35,6 @@
 Thanks to Kimi for sponsoring this project! Kimi K2.7 is an open-source agentic model developed by Moonshot AI. With InkOS, Kimi can assist with planning, drafting, reviewing, and revising novels, scripts, interactive stories, and multilingual content, while InkOS manages characters, worldbuilding, plot threads, and persistent story state to keep long-form creation coherent and controllable.
 
 InkOS Studio already supports Moonshot (Kimi). Get an API key from the Kimi Open Platform ([中文站](https://platform.moonshot.cn/) | [Global](https://platform.moonshot.ai/)) and start creating.
-
-<p align="center">
-  <a href="README.md">中文</a> | English | <a href="README.ja.md">日本語</a>
-</p>
-
----
-
-InkOS is an AI Agent system for story creation and multilingual translation: long-form novels, standalone short fiction, scripts, storyboards, fan fiction, spinoffs, style imitation, continuation, interactive film projects, interactive worlds, and long-document translation all start from the same workbench. Studio Chat, CLI, and TUI share the same action surface for discussion, confirmed actions, generation, review, persistent editing, and cross-language delivery.
 
 > 💡 **One key for global frontier models** — pair InkOS with [**kkaiapi**](https://en.kkaiapi.com/): an OpenAI-compatible gateway for Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, and image models. Add it as a custom service with base URL `https://api.kkaiapi.com/v1`, then switch models in Studio without juggling multiple provider accounts.
 
