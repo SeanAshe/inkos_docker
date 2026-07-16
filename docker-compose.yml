@@ -1,0 +1,30 @@
+services:
+  inkos:
+    build:
+      context: .
+      args:
+        INKOS_VERSION: ${INKOS_VERSION:-latest}
+    image: ghcr.io/seanashe/inkos:latest
+    container_name: inkos
+    restart: unless-stopped
+    ports:
+      - "${STUDIO_PORT:-4567}:4567"
+    volumes:
+      - inkos-workspace:/workspace
+    environment:
+      STUDIO_PORT: "4567"
+      INKOS_LLM_PROVIDER: ${INKOS_LLM_PROVIDER:-}
+      INKOS_LLM_BASE_URL: ${INKOS_LLM_BASE_URL:-}
+      INKOS_LLM_API_KEY: ${INKOS_LLM_API_KEY:-}
+      INKOS_LLM_MODEL: ${INKOS_LLM_MODEL:-}
+      INKOS_LLM_SERVICE: ${INKOS_LLM_SERVICE:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4567/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  inkos-workspace:
+    driver: local

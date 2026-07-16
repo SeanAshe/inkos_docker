@@ -1,0 +1,86 @@
+name: Build and Push InkOS Image
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+  push:
+    branches: [master]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/build-inkos-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/inkos
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get latest InkOS version from npm
+        id: npm_version
+        run: |
+          VERSION=$(npm view @actalk/inkos version)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Latest InkOS version: $VERSION"
+
+      - name: Check whether image tag already exists in GHCR
+        id: check_tag
+        run: |
+          VERSION=${{ steps.npm_version.outputs.version }}
+          if docker manifest inspect $IMAGE_NAME:$VERSION >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Image tag already exists: $VERSION"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Image tag does not exist yet: $VERSION"
+          fi
+
+      - name: Set up QEMU
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        if: steps.check_tag.outputs.exists == 'false'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.npm_version.outputs.version }}
+
+      - name: Build and push
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            INKOS_VERSION=${{ steps.npm_version.outputs.version }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
